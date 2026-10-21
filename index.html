@@ -1,0 +1,492 @@
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SmilePro Gestão</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root{--p:#0f766e;--bg:#f4f7f7;--c:#fff;--t:#1f2937;--m:#6b7280;--b:#e5e7eb;--r:#dc2626}
+*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:var(--bg);color:var(--t);display:flex;min-height:100vh}
+nav{width:200px;background:var(--p);color:#fff;padding:16px 0;flex-shrink:0}
+nav h1{font-size:16px;margin:0 16px 16px}nav a{display:block;padding:10px 16px;color:#d1fae5;cursor:pointer}nav a.on,nav a:hover{background:#115e59;color:#fff}
+main{flex:1;padding:20px;overflow:auto;min-width:0}
+.card{background:var(--c);border:1px solid var(--b);border-radius:8px;padding:16px;margin-bottom:16px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}.kpis .card{margin:0}.kpis b{display:block;font-size:22px;color:var(--p)}.kpis span{color:var(--m)}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--b)}th{color:var(--m);font-weight:600}
+input,select,textarea{width:100%;padding:8px;border:1px solid var(--b);border-radius:6px;font:inherit}
+button{background:var(--p);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font:inherit}button.s{background:#e5e7eb;color:var(--t)}button.d{background:var(--r)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.row>*{flex:1;min-width:140px}.row>button{flex:0 0 auto}
+.odo{display:grid;grid-template-columns:repeat(16,1fr);gap:4px}.odo button{padding:6px 0;font-size:11px;background:#fff;color:var(--t);border:1px solid var(--b)}
+.st1{background:#fecaca!important}.st2{background:#bfdbfe!important}.st3{background:#d1d5db!important;text-decoration:line-through}.st4{background:#fde68a!important}
+.chat{height:340px;overflow:auto;border:1px solid var(--b);border-radius:6px;padding:10px;margin-bottom:8px;background:#fafafa}.chat p{margin:0 0 8px;white-space:pre-wrap}.chat .u{text-align:right;color:var(--p)}
+.tag{padding:2px 8px;border-radius:10px;font-size:12px;background:#e5e7eb}.tag.ok{background:#d1fae5}.tag.no{background:#fee2e2}.kan{display:flex;gap:10px;overflow-x:auto;align-items:flex-start}.col{min-width:220px;flex:1;background:#eef2f2;border-radius:8px;padding:8px}.lead{background:#fff;border:1px solid var(--b);border-radius:6px;padding:8px;margin-top:8px}.lead select{margin-top:6px}
+.gr th,.gr td{padding:4px;border:1px solid var(--b);font-size:12px;min-width:92px;vertical-align:top;cursor:pointer}.gr th:first-child{min-width:48px}.ev{color:#fff;border-radius:4px;padding:2px 6px;margin-bottom:2px}.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}.gal img{width:100%;border-radius:6px}
+@media(max-width:700px){body{flex-direction:column}nav{width:auto;display:flex;overflow:auto}nav h1{display:none}.odo{grid-template-columns:repeat(8,1fr)}}
+</style></head><body><nav></nav><main></main>
+<script>
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const brl=n=>(+n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const hoje=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
+let RC={};
+const cfgLocal=()=>JSON.parse(localStorage.getItem('sp_cfg')||'{}');
+const cfg=()=>({...cfgLocal(),...RC});
+/* url/key do Supabase ficam no navegador (necessários para conectar); o resto vive na tabela "configuracoes" */
+async function loadCfg(){if(!sb)return;
+ const{data,error}=await sb.from('configuracoes').select('dados').eq('id','clinica').maybeSingle();
+ if(error){console.warn('configuracoes:',error.message);alert('Não foi possível ler as configurações no Supabase ('+error.message+'). Crie a tabela "configuracoes" (veja o SQL).');return}
+ const{url,key,...rest}=cfgLocal();let dados=data?.dados||{};
+ if(Object.keys(rest).length){dados={...dados,...rest};const{error:e2}=await sb.from('configuracoes').upsert({id:'clinica',dados,updated_at:new Date().toISOString()});
+  if(e2){alert('Erro ao gravar configurações no Supabase: '+e2.message);RC=dados;return}
+  localStorage.setItem('sp_cfg',JSON.stringify({url,key}))}
+ RC=dados}
+let sb=null,S={pacientes:[],consultas:[],leads:[],pesquisas:[],log:[],profissionais:[],orcamentos:[],evolucoes:[],fotos:[],posts:[],notas:[]},view='dash',chat=[];
+let sbKey='';function initSb(){const c=cfg(),k=c.url+'|'+c.key;if(c.url&&c.key&&window.supabase){if(!sb||k!=sbKey){sb=supabase.createClient(c.url,c.key);sbKey=k}}else sb=null}
+const LS=t=>JSON.parse(localStorage.getItem('sp_'+t)||'[]');
+const db={
+ async list(t){if(sb){const{data,error}=await sb.from(t).select('*').order('created_at',{ascending:false});if(error)throw error;return data}return LS(t)},
+ async save(t,o){if(sb){const{error}=o.id?await sb.from(t).update(o).eq('id',o.id):await sb.from(t).insert(o);if(error)throw error;return}
+  const l=LS(t);if(o.id){const i=l.findIndex(x=>x.id==o.id);l[i]={...l[i],...o}}else l.unshift({...o,id:crypto.randomUUID(),created_at:new Date().toISOString()});localStorage.setItem('sp_'+t,JSON.stringify(l))},
+ async del(t,id){if(sb){await sb.from(t).delete().eq('id',id);return}localStorage.setItem('sp_'+t,JSON.stringify(LS(t).filter(x=>x.id!=id)))}
+};
+async function gemini(prompt,sys){const k=cfg().gemini;if(!k)throw new Error('Configure a chave Gemini em Configurações.');
+ for(let i=0;i<4;i++){const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${cfg().modelo||'gemini-3.5-flash'}:generateContent?key=${k}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({systemInstruction:{parts:[{text:sys||''}]},contents:[{role:'user',parts:[{text:prompt}]}]})});
+  if(r.ok){const j=await r.json();return j.candidates?.[0]?.content?.parts?.map(p=>p.text).join('')||''}
+  if(![429,500,503].includes(r.status))throw new Error('Gemini '+r.status+(r.status==404?' (modelo indisponível: troque o modelo em Configurações)':''));await new Promise(s=>setTimeout(s,1000*2**i))}
+ throw new Error('Gemini indisponível, tente novamente.')}
+const ctx=()=>`Você é a assistente da clínica ${cfg().nome||'SmilePro Odontologia'} (Curitiba). Responda em português do Brasil, de forma objetiva e profissional. Nunca dê diagnóstico definitivo; sugira avaliação do dentista. Dados: ${S.pacientes.length} pacientes. Consultas de hoje: ${JSON.stringify(S.consultas.filter(c=>c.data==hoje()).map(c=>({p:c.paciente_nome,h:c.hora,proc:c.procedimento,st:c.status})))}`;
+
+async function boot(){initSb();if(sb){const{data}=await sb.auth.getSession();if(!data.session)return login();await loadCfg()}load()}
+function login(){$('nav').innerHTML='';$('main').innerHTML=`<div class="card" style="max-width:340px;margin:60px auto"><h3>Entrar</h3><input id="le" placeholder="E-mail" style="margin-bottom:8px"><input id="lp" type="password" placeholder="Senha" style="margin-bottom:8px"><button onclick="doLogin()">Entrar</button> <button class="s" onclick="go('cfg')">Configurações</button></div>`}
+async function doLogin(){const{error}=await sb.auth.signInWithPassword({email:$('#le').value,password:$('#lp').value});if(error)return alert(error.message);boot()}
+async function load(){try{[S.pacientes,S.consultas,S.leads,S.pesquisas,S.log,S.profissionais,S.orcamentos,S.evolucoes,S.fotos,S.posts,S.notas]=await Promise.all(['pacientes','consultas','leads','pesquisas','mensagens_log','profissionais','orcamentos','evolucoes','fotos','posts','notas_fiscais'].map(t=>db.list(t).catch(e=>{if(['posts','notas_fiscais'].includes(t))return[];throw e})))}catch(e){alert('Erro Supabase: '+e.message)}render()}
+const NAV=[['dash','Painel'],['pac','Pacientes'],['agenda','Agenda'],['fin','Financeiro'],['nf','Notas fiscais'],['crm','CRM'],['mkt','Marketing'],['ia','🤖 Assistente IA'],['cfg','Configurações']];
+function render(){$('nav').innerHTML='<h1>'+esc(cfg().nome||'SmilePro')+'</h1>'+NAV.map(([k,l])=>`<a class="${k==view?'on':''}" onclick="go('${k}')">${l}</a>`).join('')+(sb?`<a onclick="sb.auth.signOut().then(boot)">Sair</a>`:'');
+ ({dash:vDash,pac:()=>vPac(),agenda:vAgenda,fin:vFin,nf:vNf,ia:vIa,crm:vCrm,mkt:vMkt,cfg:vCfg}[view])()}
+const go=v=>{view=v;render()};
+
+function vDash(){const m=hoje().slice(0,7),pg=S.consultas.filter(c=>c.pago),sum=a=>a.reduce((s,c)=>s+ +c.valor,0);
+ const mes=sum(pg.filter(c=>(c.data||'').startsWith(m))),rec=sum(S.consultas.filter(c=>!c.pago&&c.status!='cancelada'));
+ const n=new Date(),meses=[...Array(6)].map((_,i)=>{const d=new Date(n.getFullYear(),n.getMonth()-5+i,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')});
+ const vals=meses.map(k=>sum(pg.filter(c=>(c.data||'').startsWith(k)))),mx=Math.max(...vals,1);
+ const bars=vals.map((v,i)=>{const h=v/mx*130;return `<rect x="${20+i*60}" y="${160-h}" width="40" height="${h}" fill="#0f766e" rx="3"/><text x="${40+i*60}" y="178" font-size="11" text-anchor="middle">${meses[i].slice(5)}/${meses[i].slice(2,4)}</text><text x="${40+i*60}" y="${154-h}" font-size="10" text-anchor="middle">${v?Math.round(v):''}</text>`}).join('');
+ $('main').innerHTML=`<div class="kpis"><div class="card"><b>${S.pacientes.length}</b><span>Pacientes</span></div><div class="card"><b>${S.consultas.filter(c=>c.data==hoje()).length}</b><span>Consultas hoje</span></div><div class="card"><b>${brl(mes)}</b><span>Recebido no mês</span></div><div class="card"><b>${brl(rec)}</b><span>A receber</span></div></div><div class="card"><h3>Recebimentos (6 meses, R$)</h3><svg viewBox="0 0 380 190" width="100%" style="max-width:520px">${bars}</svg></div>`}
+
+function vPac(q=''){const l=S.pacientes.filter(p=>((p.nome||'')+(p.telefone||'')).toLowerCase().includes(q.toLowerCase()));
+ $('main').innerHTML=`<div class="row"><input id="q" placeholder="Buscar paciente" value="${esc(q)}" oninput="vPac(this.value);const e=$('#q');e.focus();e.setSelectionRange(99,99)"><button onclick="fPac()">Novo paciente</button></div><div id="f"></div><div class="card"><table><tr><th>Nome</th><th>Telefone</th><th>Nascimento</th><th></th></tr>${l.map(p=>`<tr><td>${esc(p.nome)}</td><td>${esc(p.telefone)}</td><td>${esc(p.nascimento)}</td><td><button class="s" onclick="ficha('${p.id}')">Ficha</button></td></tr>`).join('')||'<tr><td colspan=4>Nenhum paciente.</td></tr>'}</table></div>`}
+function fPac(id){const p=S.pacientes.find(x=>x.id==id)||{};$('#f').innerHTML=`<div class="card"><h3>${id?'Editar':'Novo'} paciente</h3><div class="row"><input id="n" placeholder="Nome" value="${esc(p.nome)}"><input id="t" placeholder="WhatsApp (DDD+número)" value="${esc(p.telefone)}"><input id="d" type="date" value="${esc(p.nascimento)}"><input id="cpf" placeholder="CPF (para nota fiscal)" value="${esc(p.cpf)}"></div><textarea id="h" rows="3" placeholder="Histórico, alergias, observações">${esc(p.historico)}</textarea><div class="row" style="margin-top:8px"><button onclick="sPac('${id||''}')">Salvar</button><button class="s" onclick="$('#f').innerHTML=''">Cancelar</button></div></div>`;$('#f').scrollIntoView()}
+async function sPac(id){const o={nome:$('#n').value.trim(),telefone:$('#t').value.trim(),nascimento:$('#d').value||null,cpf:$('#cpf').value.trim(),historico:$('#h').value};if(!o.nome)return alert('Informe o nome');if(id)o.id=id;await db.save('pacientes',o);view='pac';await load()}
+async function delPac(id){if(confirm('Excluir paciente e suas consultas?')){await db.del('pacientes',id);view='pac';await load()}}
+
+const ST=['Saudável','Cárie','Restaurado','Ausente','Em tratamento'],TT=[18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28,48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
+function fichaBase(id){const p=S.pacientes.find(x=>x.id==id),d=p.dentes||{},cs=S.consultas.filter(c=>c.paciente_id==id);
+ $('main').innerHTML=`<div class="row"><button class="s" onclick="go('pac')">Voltar</button><button onclick="fPac('${id}')">Editar dados</button><button class="d" onclick="delPac('${id}')">Excluir</button></div><div class="card"><h3>${esc(p.nome)}</h3><p>${esc(p.telefone)} | ${esc(p.nascimento)}</p><p>${esc(p.historico)}</p></div><div id="f"></div><div class="card"><h3>Odontograma</h3><p style="color:var(--m)">Clique para alternar: saudável, cárie (vermelho), restaurado (azul), ausente (cinza), em tratamento (amarelo).</p><div class="odo">${TT.map(t=>`<button class="st${d[t]||0}" title="${ST[d[t]||0]}" onclick="dente('${id}',${t})">${t}</button>`).join('')}</div></div><div class="card"><h3>Consultas</h3><table>${cs.map(c=>`<tr><td>${esc(c.data)}</td><td>${esc(c.procedimento)}</td><td>${brl(c.valor)}</td><td>${esc(c.status)}</td></tr>`).join('')||'<tr><td>Sem consultas.</td></tr>'}</table></div><div class="card"><button onclick="resumo('${id}')">🤖 Resumo do paciente com IA</button><p id="rs" style="white-space:pre-wrap"></p></div>`}
+async function dente(id,t){const p=S.pacientes.find(x=>x.id==id),d={...(p.dentes||{})};d[t]=((d[t]||0)+1)%5;await db.save('pacientes',{id,dentes:d});p.dentes=d;ficha(id)}
+async function resumo(id){const p=S.pacientes.find(x=>x.id==id),el=$('#rs');el.textContent='Gerando...';
+ try{el.textContent=await gemini('Resuma para o dentista a ficha deste paciente, com pontos de atenção e próximos passos sugeridos (sem diagnóstico definitivo): '+JSON.stringify({nascimento:p.nascimento,anamnese:p.anamnese,historico:p.historico,dentes:Object.entries(p.dentes||{}).map(([t,s])=>t+': '+ST[s]),consultas:S.consultas.filter(c=>c.paciente_id==id).map(c=>[c.data,c.procedimento,c.status])}),ctx())}catch(e){el.textContent=e.message}}
+
+function vAgLista(){const l=[...S.consultas].sort((a,b)=>((a.data||'')+(a.hora||'')).localeCompare((b.data||'')+(b.hora||'')));
+ $('main').innerHTML=`<div class="row"><button class="s" onclick="ag.tab='sem';vAgenda()">Ver semana</button></div><div class="card"><h3>Nova consulta</h3><div class="row"><select id="cp">${S.pacientes.map(p=>`<option value="${p.id}">${esc(p.nome)}</option>`).join('')}</select><input id="cd" type="date" value="${hoje()}"><input id="ch" type="time" value="09:00"><input id="cr" placeholder="Procedimento"><input id="cv" type="number" placeholder="Valor R$"><button onclick="sCons()">Agendar</button></div></div><div class="card"><table><tr><th>Data</th><th>Hora</th><th>Paciente</th><th>Procedimento</th><th>Status</th><th></th></tr>${l.map(c=>`<tr><td>${esc(c.data)}</td><td>${esc((c.hora||'').slice(0,5))}</td><td>${esc(c.paciente_nome)}</td><td>${esc(c.procedimento)}</td><td><select onchange="stCons('${c.id}',this.value)">${['agendada','confirmada','realizada','cancelada'].map(s=>`<option ${s==c.status?'selected':''}>${s}</option>`).join('')}</select></td><td style="white-space:nowrap"><button class="s" onclick="lembrete('${c.id}')">Lembrete</button> <button class="d" onclick="delCons('${c.id}')">x</button></td></tr>`).join('')||'<tr><td colspan=6>Sem consultas.</td></tr>'}</table></div>`}
+async function stCons(id,s){await db.save('consultas',{id,status:s});await load()}
+async function delCons(id){if(confirm('Excluir consulta?')){await gDel(id);await db.del('consultas',id);await load()}}
+async function lembrete(id){const c=S.consultas.find(x=>x.id==id),p=S.pacientes.find(x=>x.id==c.paciente_id);let m;
+ try{m=await gemini(`Escreva uma mensagem curta e cordial de WhatsApp lembrando ${c.paciente_nome} da consulta (${c.procedimento||'consulta'}) em ${c.data} às ${(c.hora||'').slice(0,5)}, pedindo confirmação. Sem emojis.`,ctx())}catch(e){return alert(e.message)}
+ const tel='55'+String(p?.telefone||'').replace(/\D/g,'').replace(/^55/,'');window.open(`https://wa.me/${tel}?text=${encodeURIComponent(m.trim())}`)}
+
+function vFin(){const l=S.consultas.filter(c=>c.valor>0);
+ $('main').innerHTML=`<div class="card"><table><tr><th>Data</th><th>Paciente</th><th>Procedimento</th><th>Valor</th><th>Pagamento</th></tr>${l.map(c=>`<tr><td>${esc(c.data)}</td><td>${esc(c.paciente_nome)}</td><td>${esc(c.procedimento)}</td><td>${brl(c.valor)}</td><td><button class="${c.pago?'':'s'}" onclick="pagar('${c.id}',${!c.pago})">${c.pago?'Pago':'Pendente'}</button></td></tr>`).join('')||'<tr><td>Sem lançamentos.</td></tr>'}</table></div>`}
+async function pagar(id,v){await db.save('consultas',{id,pago:v});await load()}
+
+function vIa(){$('main').innerHTML=`<div class="card"><h3>🤖 Assistente da clínica</h3><div class="chat" id="cx">${chat.map(m=>`<p class="${m.r}">${esc(m.t)}</p>`).join('')}</div><div class="row"><input id="im" placeholder="Pergunte sobre a agenda, peça textos para redes sociais..." onkeydown="if(event.key=='Enter')ask()"><button onclick="ask()">Enviar</button></div></div>`;const c=$('#cx');c.scrollTop=c.scrollHeight}
+async function ask(){const t=$('#im').value.trim();if(!t)return;chat.push({r:'u',t},{r:'a',t:'...'});vIa();
+ try{const h=chat.slice(0,-1).slice(-10).map(m=>(m.r=='u'?'Usuário: ':'Assistente: ')+m.t).join('\n');chat[chat.length-1].t=await gemini(h,ctx())}catch(e){chat[chat.length-1].t=e.message}vIa()}
+
+function vCfg(){const c=cfg();$('main').innerHTML=`<div class="card"><h3>Configurações</h3><p style="color:var(--m)">Com Supabase configurado, estas configurações são gravadas na tabela "configuracoes" (apenas URL e chave anon ficam neste navegador, pois são necessárias para conectar). Sem Supabase, tudo fica só neste navegador (modo demonstração). Use apenas a chave anon do Supabase, com RLS ativo, nunca a service_role.</p><div class="row"><input id="cn" placeholder="Nome da clínica" value="${esc(c.nome)}"></div><div class="row"><input id="cu" placeholder="Supabase URL" value="${esc(c.url)}"><input id="ck" placeholder="Supabase anon key" value="${esc(c.key)}"></div><div class="row"><input id="cg" placeholder="Chave da API Gemini" value="${esc(c.gemini)}"><input id="gm" placeholder="Modelo Gemini (padrão: gemini-3.5-flash)" value="${esc(c.modelo)}"></div><div class="row"><input id="gc" placeholder="Google Client ID (Agenda)" value="${esc(c.gclient)}"><input id="gk" placeholder="ID da agenda (vazio = principal)" value="${esc(c.gcal)}"></div><div class="row"><select id="gi"><option value="sim" ${c.gimp!='nao'?'selected':''}>Importar eventos do Google Agenda para o sistema: sim</option><option value="nao" ${c.gimp=='nao'?'selected':''}>Importar eventos do Google Agenda para o sistema: não</option></select></div><div class="row"><input id="mg" placeholder="Link de avaliação do Google (g.page/r/.../review)" value="${esc(c.glink)}"><input id="mi" placeholder="Instagram da clínica (@...)" value="${esc(c.insta)}"><input id="mo" placeholder="Foco da clínica (ex.: implantes, ortodontia, estética)" value="${esc(c.foco)}"></div><div class="row"><input id="mm" placeholder="Modelo Gemini de imagem (padrão: gemini-nano-banana-2.1)" value="${esc(c.modeloImg)}"></div><h4 style="margin:12px 0 8px">Nota fiscal (NFS-e Nacional)</h4><div class="row"><input id="nc1" placeholder="CNPJ da clínica" value="${esc(c.cnpj)}"><input id="nc2" placeholder="Código de tributação nacional (ex.: 04.12.01)" value="${esc(c.nfcod)}"><input id="nc3" placeholder="Descrição padrão do serviço" value="${esc(c.nfdesc)}"></div><button onclick="sCfg()">Salvar</button></div>`}
+async function sCfg(){const url=$('#cu').value.trim(),key=$('#ck').value.trim(),
+ dados={logo:cfg().logo,cor:cfg().cor,fonte:cfg().fonte,nome:$('#cn').value,gemini:$('#cg').value.trim(),modelo:$('#gm').value.trim(),gclient:$('#gc').value.replace(/[\s"']/g,''),gcal:$('#gk').value.trim(),gimp:$('#gi').value,glink:$('#mg').value.trim(),insta:$('#mi').value.trim(),foco:$('#mo').value.trim(),cnpj:$('#nc1').value.trim(),nfcod:$('#nc2').value.trim(),nfdesc:$('#nc3').value.trim(),modeloImg:$('#mm').value.trim()};
+ if(!url||!key){localStorage.setItem('sp_cfg',JSON.stringify({url,key,...dados}));RC={};view='dash';return boot()}
+ localStorage.setItem('sp_cfg',JSON.stringify({url,key}));initSb();
+ const{data:s}=await sb.auth.getSession();
+ if(!s.session){localStorage.setItem('sp_cfg',JSON.stringify({url,key,...dados}));alert('Faça login: as configurações serão enviadas ao Supabase em seguida.');view='dash';return boot()}
+ const{error}=await sb.from('configuracoes').upsert({id:'clinica',dados,updated_at:new Date().toISOString()});
+ if(error){localStorage.setItem('sp_cfg',JSON.stringify({url,key,...dados}));return alert('Erro ao gravar no Supabase: '+error.message+'\nCrie a tabela "configuracoes" (veja o SQL).')}
+ RC=dados;view='dash';boot()}
+/* ===== CRM ===== */
+let crmTab='fila',fila=[];
+const ETAPAS=['Novo','Contato feito','Avaliação agendada','Orçamento enviado','Fechado','Perdido'];
+const addDias=n=>{const d=new Date();d.setDate(d.getDate()+n);return new Date(d-d.getTimezoneOffset()*6e4).toISOString().slice(0,10)};
+const fone=t=>'55'+String(t||'').replace(/\D/g,'').replace(/^55/,'');
+const wa=(t,m)=>window.open(`https://wa.me/${fone(t)}?text=${encodeURIComponent(m)}`);
+const clin=()=>cfg().nome||'SmilePro Odontologia',primeiro=n=>String(n||'').split(' ')[0];
+async function texto(prompt,fb){try{return cfg().gemini?await gemini(prompt,ctx()):fb}catch(e){return fb}}
+function vCrm(){const T=[['fila','Fila de mensagens'],['funil','Funil de leads'],['nps','Satisfação'],['aniv','Aniversariantes']];
+ $('main').innerHTML=`<div class="row">${T.map(([k,l])=>`<button class="${k==crmTab?'':'s'}" onclick="crmTab='${k}';vCrm()">${l}</button>`).join('')}</div><div id="ct"></div>`;
+ ({fila:cFila,funil:cFunil,nps:cNps,aniv:cAniv}[crmTab])()}
+function mkFila(){const L=new Set(S.log.map(l=>l.tipo+'|'+l.ref)),f=[],tel=id=>S.pacientes.find(p=>p.id==id)?.telefone;
+ S.consultas.forEach(c=>{const h=(c.hora||'').slice(0,5),b={ref:c.id,nome:c.paciente_nome,tel:tel(c.paciente_id)},pn=primeiro(c.paciente_nome);
+  if(c.data==addDias(1)&&['agendada','confirmada'].includes(c.status))f.push({...b,tipo:'lembrete',det:`Consulta ${c.data} às ${h}`,fb:`Olá, ${pn}! Passando para lembrar da sua consulta amanhã, às ${h}, na ${clin()}. Pode confirmar sua presença?`});
+  if(c.status=='realizada'&&!c.pago&&c.valor>0)f.push({...b,tipo:'cobranca',det:`${brl(c.valor)} em aberto (${c.data})`,fb:`Olá, ${pn}! Identificamos um valor de ${brl(c.valor)} em aberto referente ao atendimento de ${c.data}. Podemos ajudar com a forma de pagamento?`});
+  if(c.status=='realizada'&&c.data>=addDias(-2))f.push({...b,tipo:'satisfacao',det:`Atendimento em ${c.data}`,fb:`Olá, ${pn}! Como foi seu atendimento na ${clin()}? De 0 a 10, qual a chance de nos indicar a amigos e familiares? Sua opinião é muito importante para nós.`})});
+ S.pacientes.forEach(p=>{if((p.nascimento||'').slice(5)==hoje().slice(5))f.push({tipo:'aniversario',ref:p.id+'-'+hoje().slice(0,4),nome:p.nome,tel:p.telefone,det:'Aniversário hoje',fb:`Parabéns, ${primeiro(p.nome)}! A equipe da ${clin()} deseja um dia especial, com muita saúde e um sorriso cada vez mais bonito!`})});
+ return f.filter(x=>!L.has(x.tipo+'|'+x.ref))}
+function cFila(){fila=mkFila();const R={lembrete:'Lembrete',cobranca:'Cobrança',satisfacao:'Pesquisa',aniversario:'Aniversário'};
+ $('#ct').innerHTML=`<div class="card"><p style="color:var(--m)">Mensagens que devem sair agora: lembrete de consultas de amanhã, cobrança de valores em aberto, pesquisa de satisfação pós-atendimento e aniversários. Cada envio abre o WhatsApp com o texto pronto (personalizado pela IA, se a chave Gemini estiver configurada) e a mensagem sai da fila.</p><table><tr><th>Tipo</th><th>Paciente</th><th>Detalhe</th><th></th></tr>${fila.map((x,i)=>`<tr><td><span class="tag">${R[x.tipo]}</span></td><td>${esc(x.nome)}</td><td>${esc(x.det)}</td><td style="white-space:nowrap"><button onclick="enviar(${i})">Enviar</button> <button class="s" onclick="pular(${i})">Dispensar</button></td></tr>`).join('')||'<tr><td colspan=4>Nenhuma mensagem pendente.</td></tr>'}</table></div>`}
+async function enviar(i){const x=fila[i];if(!x.tel)return alert('Paciente sem telefone cadastrado');const w=window.open('','_blank');
+ const m=await texto('Reescreva de forma calorosa e curta, mantendo o sentido, esta mensagem de WhatsApp de uma clínica odontológica (sem emojis, sem inventar informações): '+x.fb,x.fb);
+ w.location.href=`https://wa.me/${fone(x.tel)}?text=${encodeURIComponent(m.trim())}`;await pular(i)}
+async function pular(i){const x=fila[i];await db.save('mensagens_log',{tipo:x.tipo,ref:x.ref,paciente_nome:x.nome});await load()}
+function cFunil(){const n=S.leads.length,f=S.leads.filter(l=>l.etapa=='Fechado').length;
+ $('#ct').innerHTML=`<div class="card"><h3>Novo lead</h3><div class="row"><input id="ln" placeholder="Nome"><input id="lt" placeholder="WhatsApp"><input id="lo" placeholder="Origem (Instagram, Google...)"><input id="li" placeholder="Interesse (implante, lentes...)"><button onclick="sLead()">Adicionar</button></div><p style="color:var(--m);margin:0">${n} leads | conversão: ${n?Math.round(f/n*100):0}%</p></div><div class="kan">${ETAPAS.map(e=>{const l=S.leads.filter(x=>x.etapa==e);return `<div class="col"><b>${e}</b> <span class="tag">${l.length}</span>${l.map(x=>`<div class="lead"><b>${esc(x.nome)}</b><br><small>${esc(x.origem)} | ${esc(x.interesse)}</small><select onchange="mvLead('${x.id}',this.value)">${ETAPAS.map(s=>`<option ${s==x.etapa?'selected':''}>${s}</option>`).join('')}</select><div class="row" style="margin:6px 0 0"><button class="s" onclick="wl('${x.id}')">WhatsApp</button><button class="d" onclick="delLead('${x.id}')">x</button></div></div>`).join('')}</div>`}).join('')}</div>`}
+async function sLead(){const nome=$('#ln').value.trim();if(!nome)return alert('Informe o nome');await db.save('leads',{nome,telefone:$('#lt').value.trim(),origem:$('#lo').value.trim(),interesse:$('#li').value.trim(),etapa:'Novo'});await load()}
+async function mvLead(id,etapa){await db.save('leads',{id,etapa});await load()}
+async function delLead(id){if(confirm('Excluir lead?')){await db.del('leads',id);await load()}}
+function wl(id){const l=S.leads.find(x=>x.id==id);wa(l.telefone,`Olá, ${primeiro(l.nome)}! Aqui é da ${clin()}. Vi seu interesse em ${l.interesse||'nossos tratamentos'} e adoraria ajudar. Podemos conversar?`)}
+function cNps(){const P=S.pesquisas,n=P.length,pr=P.filter(p=>p.nota>=9).length,de=P.filter(p=>p.nota<=6).length;
+ $('#ct').innerHTML=`<div class="kpis"><div class="card"><b>${n?Math.round((pr-de)/n*100):0}</b><span>NPS</span></div><div class="card"><b>${n}</b><span>Respostas</span></div><div class="card"><b>${n?(P.reduce((a,p)=>a+ +p.nota,0)/n).toFixed(1):'-'}</b><span>Nota média</span></div></div><div class="card"><h3>Registrar resposta</h3><div class="row"><select id="np">${S.pacientes.map(p=>`<option value="${p.id}">${esc(p.nome)}</option>`).join('')}</select><input id="nn" type="number" min="0" max="10" placeholder="Nota 0-10"><input id="nc" placeholder="Comentário"><button onclick="sNps()">Registrar</button></div></div><div class="card"><button onclick="resFb()">🤖 Resumir comentários com IA</button><p id="rf" style="white-space:pre-wrap"></p><table><tr><th>Data</th><th>Paciente</th><th>Nota</th><th>Comentário</th></tr>${P.map(p=>`<tr><td>${esc((p.created_at||'').slice(0,10))}</td><td>${esc(p.paciente_nome)}</td><td><span class="tag ${p.nota>=9?'ok':p.nota<=6?'no':''}">${p.nota}</span></td><td>${esc(p.comentario)}</td></tr>`).join('')||'<tr><td colspan=4>Sem respostas.</td></tr>'}</table></div>`}
+async function sNps(){const p=S.pacientes.find(x=>x.id==$('#np').value),v=$('#nn').value;if(!p||v===''||v<0||v>10)return alert('Informe paciente e nota de 0 a 10');await db.save('pesquisas',{paciente_id:p.id,paciente_nome:p.nome,nota:+v,comentario:$('#nc').value});await load()}
+async function resFb(){const el=$('#rf');el.textContent='Gerando...';try{el.textContent=await gemini('Resuma os principais elogios e problemas citados nestas respostas de pesquisa de satisfação de uma clínica odontológica e sugira 3 ações de melhoria: '+JSON.stringify(S.pesquisas.map(p=>[p.nota,p.comentario])),ctx())}catch(e){el.textContent=e.message}}
+function cAniv(){const m=hoje().slice(5,7),l=S.pacientes.filter(p=>(p.nascimento||'').slice(5,7)==m).sort((a,b)=>a.nascimento.slice(8)-b.nascimento.slice(8));
+ $('#ct').innerHTML=`<div class="card"><h3>Aniversariantes do mês</h3><table>${l.map(p=>`<tr><td>${p.nascimento.slice(8)}/${m}</td><td>${esc(p.nome)}</td><td><button class="s" onclick="parab('${p.id}')">Parabéns</button></td></tr>`).join('')||'<tr><td>Nenhum aniversariante neste mês.</td></tr>'}</table></div>`}
+function parab(id){const p=S.pacientes.find(x=>x.id==id);wa(p.telefone,`Parabéns, ${primeiro(p.nome)}! A equipe da ${clin()} deseja um dia especial, com muita saúde e um sorriso cada vez mais bonito!`)}
+/* ===== FASE 1: agenda semanal + ficha clinica ===== */
+let ag={w:0,prof:'',tab:'sem'},ft='anam',itens=[];
+const ymd=d=>new Date(d-d.getTimezoneOffset()*6e4).toISOString().slice(0,10);
+const SL=[];for(let h=8;h<18;h++)SL.push(String(h).padStart(2,'0')+':00',String(h).padStart(2,'0')+':30');
+const slot=h=>{const[a,b]=(h||'00:00').split(':');return a+':'+(+b<30?'00':'30')};
+function semana(){const d=new Date();d.setDate(d.getDate()-((d.getDay()+6)%7)+ag.w*7);return[...Array(6)].map((_,i)=>{const x=new Date(d);x.setDate(d.getDate()+i);return ymd(x)})}
+function vAgenda(){if(ag.tab=='lista')return vAgLista();const D=semana(),P=S.profissionais,cs=S.consultas.filter(c=>c.status!='cancelada'&&(!ag.prof||c.profissional_id==ag.prof));
+ $('main').innerHTML=`<div class="row"><button class="s" onclick="ag.w--;vAgenda()">Anterior</button><button class="s" onclick="ag.w=0;vAgenda()">Hoje</button><button class="s" onclick="ag.w++;vAgenda()">Próxima</button><select onchange="ag.prof=this.value;vAgenda()"><option value="">Todos os profissionais</option>${P.map(p=>`<option value="${p.id}" ${p.id==ag.prof?'selected':''}>${esc(p.nome)}</option>`).join('')}</select><button class="s" onclick="ag.tab='lista';vAgenda()">Ver lista</button><button class="s" onclick="fProf()">Profissionais</button><button class="s" onclick="gTok?gSync():gConectar()">${gTok?'Revisar alterações do Google':'Conectar Google Agenda'}</button></div><div id="f"></div><div class="card" style="overflow:auto"><table class="gr"><tr><th></th>${D.map((d,i)=>`<th>${['Seg','Ter','Qua','Qui','Sex','Sáb'][i]} ${d.slice(8)}/${d.slice(5,7)}</th>`).join('')}</tr>${SL.map(s=>`<tr><th>${s}</th>${D.map(d=>`<td onclick="novaCons('${d}','${s}')">${cs.filter(c=>c.data==d&&slot((c.hora||'').slice(0,5))==s).map(c=>`<div class="ev" style="background:${(P.find(p=>p.id==c.profissional_id)||{}).cor||'#0f766e'}" onclick="event.stopPropagation();editCons('${c.id}')">${esc(primeiro(c.paciente_nome))} <small>${esc(c.cadeira||'')}</small></div>`).join('')}</td>`).join('')}</tr>`).join('')}</table></div>`}
+function opts(a,f){return a.map(f).join('')}
+function novaCons(d,s){$('#f').innerHTML=`<div class="card"><h3>Nova consulta ${d.slice(8)}/${d.slice(5,7)} ${s}</h3><div class="row"><select id="cp">${opts(S.pacientes,p=>`<option value="${p.id}">${esc(p.nome)}</option>`)}</select><input id="cd" type="date" value="${d}"><input id="ch" type="time" step="1800" value="${s}"><select id="cdur">${opts([30,60,90,120],m=>`<option value="${m}">${m} min</option>`)}</select><select id="cprof">${opts(S.profissionais,p=>`<option value="${p.id}" ${p.id==ag.prof?'selected':''}>${esc(p.nome)}</option>`)}</select><select id="ccad">${opts(['Cadeira 1','Cadeira 2','Cadeira 3'],c=>`<option>${c}</option>`)}</select><input id="cr" placeholder="Procedimento"><input id="cv" type="number" placeholder="Valor R$"><button onclick="sCons()">Agendar</button></div></div>`;$('#f').scrollIntoView()}
+async function sCons(){const g=i=>$('#'+i)?.value,p=S.pacientes.find(x=>x.id==g('cp'));if(!p)return alert('Cadastre um paciente primeiro');
+ const pr=S.profissionais.find(x=>x.id==g('cprof')),o={paciente_id:p.id,paciente_nome:p.nome,data:g('cd'),hora:g('ch'),duracao:+g('cdur')||30,profissional_id:pr?.id||null,profissional_nome:pr?.nome||null,cadeira:g('ccad')||null,procedimento:g('cr'),valor:+g('cv')||0,status:'agendada',pago:false};
+ const m=h=>{const[a,b]=h.split(':');return a*60+ +b},ini=m(o.hora),fim=ini+o.duracao;
+ const x=S.consultas.find(c=>c.status!='cancelada'&&c.data==o.data&&((o.profissional_id&&c.profissional_id==o.profissional_id)||(o.cadeira&&c.cadeira==o.cadeira))&&m(c.hora)<fim&&m(c.hora)+(c.duracao||30)>ini);
+ if(x&&!confirm(`Conflito com ${x.paciente_nome} (${x.hora.slice(0,5)}, ${x.profissional_nome||''} ${x.cadeira||''}). Agendar mesmo assim?`))return;
+ await db.save('consultas',o);await load()}
+function editCons(id){const c=S.consultas.find(x=>x.id==id);$('#f').innerHTML=`<div class="card"><h3>${esc(c.paciente_nome)} - ${esc(c.data)} ${esc((c.hora||'').slice(0,5))}</h3><p>${esc(c.procedimento)} | ${esc(c.profissional_nome||'')} ${esc(c.cadeira||'')} | ${c.duracao||30} min</p><div class="row"><select onchange="stCons('${id}',this.value)">${opts(['agendada','confirmada','realizada','cancelada'],s=>`<option ${s==c.status?'selected':''}>${s}</option>`)}</select>${c.paciente_id?`<button class="s" onclick="ficha('${c.paciente_id}')">Abrir ficha</button>`:`<select id="vp">${opts(S.pacientes,p=>`<option value="${p.id}">${esc(p.nome)}</option>`)}</select><button onclick="vinc('${id}')">Vincular paciente</button>`}<button class="d" onclick="delCons('${id}')">Excluir</button></div></div>`;$('#f').scrollIntoView()}
+function fProf(){$('#f').innerHTML=`<div class="card"><h3>Profissionais</h3><table>${opts(S.profissionais,p=>`<tr><td><span class="tag" style="background:${p.cor};color:#fff">${esc(p.nome)}</span></td><td>${esc(p.cro)}</td><td><button class="d" onclick="delProf('${p.id}')">x</button></td></tr>`)}</table><div class="row"><input id="pn" placeholder="Nome (Dra. Ana)"><input id="pc" placeholder="CRO"><input id="pk" type="color" value="#0f766e"><button onclick="sProf()">Adicionar</button></div></div>`}
+async function sProf(){const nome=$('#pn').value.trim();if(!nome)return alert('Informe o nome');await db.save('profissionais',{nome,cro:$('#pc').value,cor:$('#pk').value});await load()}
+async function delProf(id){if(confirm('Excluir profissional?')){await db.del('profissionais',id);await load()}}
+
+const FT=[['anam','Anamnese'],['plano','Plano e orçamento'],['evo','Evolução'],['fotos','Fotos']];
+function ficha(id,t){ft=t||ft;fichaBase(id);$('main').insertAdjacentHTML('beforeend',`<div class="row">${opts(FT,([k,l])=>`<button class="${k==ft?'':'s'}" onclick="ficha('${id}','${k}')">${l}</button>`)}</div><div id="fx"></div>`);({anam:tAnam,plano:tPlano,evo:tEvo,fotos:tFotos}[ft])(id)}
+const AN=['Diabetes','Hipertensão','Cardiopatia','Gestante','Fumante','Usa anticoagulante','Alergia a anestésico'];
+function tAnam(id){const a=S.pacientes.find(x=>x.id==id).anamnese||{};
+ $('#fx').innerHTML=`<div class="card"><h3>Anamnese</h3><div class="row">${opts(AN,(k,i)=>`<label style="flex:0 0 auto"><input type="checkbox" id="a${i}" style="width:auto" ${a.cond?.includes(k)?'checked':''}> ${k}</label>`)}</div><div class="row"><input id="aq" placeholder="Queixa principal" value="${esc(a.queixa)}"><input id="aa" placeholder="Alergias" value="${esc(a.alergias)}"></div><div class="row"><input id="am" placeholder="Medicamentos em uso" value="${esc(a.meds)}"><input id="as" placeholder="Cirurgias e tratamentos anteriores" value="${esc(a.cir)}"></div><button onclick="sAnam('${id}')">Salvar anamnese</button></div>`}
+async function sAnam(id){const a={cond:AN.filter((k,i)=>$('#a'+i).checked),queixa:$('#aq').value,alergias:$('#aa').value,meds:$('#am').value,cir:$('#as').value};await db.save('pacientes',{id,anamnese:a});S.pacientes.find(x=>x.id==id).anamnese=a;alert('Anamnese salva')}
+
+const totOrc=o=>(o.itens||[]).reduce((a,i)=>a+ +i.valor,0)-(+o.desconto||0);
+function tPlano(id){const O=S.orcamentos.filter(o=>o.paciente_id==id);itens=[];
+ $('#fx').innerHTML=`<div class="card"><h3>Novo orçamento</h3><div class="row"><input id="od" placeholder="Dente (ex.: 16)" style="max-width:120px"><input id="op" placeholder="Procedimento"><input id="ov" type="number" placeholder="Valor R$"><button class="s" onclick="addIt()">Adicionar item</button></div><table id="oi"></table><div class="row"><input id="odc" type="number" placeholder="Desconto R$"><button onclick="sOrc('${id}')">Salvar orçamento</button></div></div>${opts(O,o=>`<div class="card"><b>${esc((o.created_at||'').slice(0,10))}</b> <span class="tag ${o.status=='aprovado'?'ok':o.status=='recusado'?'no':''}">${o.status}</span><table>${opts(o.itens||[],i=>`<tr><td>${esc(i.dente)}</td><td>${esc(i.proc)}</td><td>${brl(i.valor)}</td></tr>`)}</table><p>Desconto: ${brl(o.desconto)} | <b>Total: ${brl(totOrc(o))}</b></p><div class="row"><button onclick="stOrc('${o.id}','aprovado')">Aprovar</button><button class="s" onclick="stOrc('${o.id}','recusado')">Recusar</button><button class="s" onclick="impOrc('${o.id}')">Imprimir</button><button class="s" onclick="zapOrc('${o.id}')">WhatsApp</button><button class="d" onclick="delOrc('${o.id}')">x</button></div></div>`)}`;rIt()}
+function addIt(){const proc=$('#op').value.trim(),v=+$('#ov').value;if(!proc||!v)return alert('Informe procedimento e valor');itens.push({dente:$('#od').value,proc,valor:v});$('#op').value=$('#ov').value=$('#od').value='';rIt()}
+function rIt(){$('#oi').innerHTML=opts(itens,(i,k)=>`<tr><td>${esc(i.dente)}</td><td>${esc(i.proc)}</td><td>${brl(i.valor)}</td><td><button class="d" onclick="itens.splice(${k},1);rIt()">x</button></td></tr>`)}
+async function sOrc(id){if(!itens.length)return alert('Adicione ao menos um item');const p=S.pacientes.find(x=>x.id==id);await db.save('orcamentos',{paciente_id:id,paciente_nome:p.nome,itens,desconto:+$('#odc').value||0,status:'aberto'});await load();ficha(id,'plano')}
+async function stOrc(oid,s){const o=S.orcamentos.find(x=>x.id==oid);await db.save('orcamentos',{id:oid,status:s});await load();ficha(o.paciente_id,'plano')}
+async function delOrc(oid){const o=S.orcamentos.find(x=>x.id==oid);if(confirm('Excluir orçamento?')){await db.del('orcamentos',oid);await load();ficha(o.paciente_id,'plano')}}
+function zapOrc(oid){const o=S.orcamentos.find(x=>x.id==oid),p=S.pacientes.find(x=>x.id==o.paciente_id);wa(p.telefone,`Olá, ${primeiro(p.nome)}! Segue o orçamento do seu tratamento na ${clin()}:\n`+o.itens.map(i=>`- ${i.dente?'Dente '+i.dente+': ':''}${i.proc}: ${brl(i.valor)}`).join('\n')+`\nTotal: ${brl(totOrc(o))}. Qualquer dúvida, estamos à disposição!`)}
+function impOrc(oid){const o=S.orcamentos.find(x=>x.id==oid),w=window.open('','_blank');w.document.write(`<title>Orçamento</title><body style="font:14px system-ui;max-width:700px;margin:30px auto"><h2>${esc(clin())}</h2><h3>Orçamento - ${esc(o.paciente_nome)}</h3><p>${esc((o.created_at||'').slice(0,10))}</p><table border=1 cellpadding=6 style="border-collapse:collapse;width:100%"><tr><th>Dente</th><th>Procedimento</th><th>Valor</th></tr>${opts(o.itens,i=>`<tr><td>${esc(i.dente)}</td><td>${esc(i.proc)}</td><td>${brl(i.valor)}</td></tr>`)}</table><p>Desconto: ${brl(o.desconto)}</p><h3>Total: ${brl(totOrc(o))}</h3><p>Validade: 30 dias.</p><script>print()<\/script>`);w.document.close()}
+
+function tEvo(id){const E=S.evolucoes.filter(e=>e.paciente_id==id);
+ $('#fx').innerHTML=`<div class="card"><h3>Evolução clínica</h3><textarea id="et" rows="3" placeholder="Procedimento realizado, observações, orientações..."></textarea><div class="row" style="margin-top:8px"><select id="ep"><option value="">Profissional</option>${opts(S.profissionais,p=>`<option>${esc(p.nome)}</option>`)}</select><button onclick="sEvo('${id}')">Registrar evolução</button></div></div><div class="card">${opts(E,e=>`<p><b>${esc((e.created_at||'').slice(0,10))}</b> ${esc(e.profissional_nome)}<br>${esc(e.texto)}</p>`)||'Sem registros.'}</div>`}
+async function sEvo(id){const t=$('#et').value.trim();if(!t)return;await db.save('evolucoes',{paciente_id:id,texto:t,profissional_nome:$('#ep').value});await load();ficha(id,'evo')}
+
+const redim=f=>new Promise(r=>{const i=new Image();i.onload=()=>{const k=Math.min(1,1000/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=i.width*k;c.height=i.height*k;c.getContext('2d').drawImage(i,0,0,c.width,c.height);c.toBlob(r,'image/jpeg',.75)};i.src=URL.createObjectURL(f)});
+function tFotos(id){const F=S.fotos.filter(f=>f.paciente_id==id);
+ $('#fx').innerHTML=`<div class="card"><h3>Fotos</h3><div class="row"><input id="fl" placeholder="Legenda (ex.: antes, 16 oclusal)"><input id="ff" type="file" accept="image/*"><button onclick="sFoto('${id}')">Enviar foto</button></div><div class="gal">${opts(F,f=>`<figure style="margin:0"><img data-p="${esc(f.path)}" alt=""><figcaption>${esc(f.legenda)} <small>${esc((f.created_at||'').slice(0,10))}</small> <a href="#" onclick="delFoto('${f.id}');return false">excluir</a></figcaption></figure>`)||'Sem fotos.'}</div></div>`;
+ document.querySelectorAll('#fx img[data-p]').forEach(async im=>{const p=im.dataset.p;if(p.startsWith('data:'))im.src=p;else if(sb){const{data}=await sb.storage.from('fotos-pacientes').createSignedUrl(p,3600);if(data)im.src=data.signedUrl}})}
+async function sFoto(id){const f=$('#ff').files[0];if(!f)return alert('Escolha uma imagem');const b=await redim(f);let path;
+ if(sb){path=`${id}/${Date.now()}.jpg`;const{error}=await sb.storage.from('fotos-pacientes').upload(path,b,{contentType:'image/jpeg'});if(error)return alert(error.message)}
+ else path=await new Promise(r=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.readAsDataURL(b)});
+ await db.save('fotos',{paciente_id:id,path,legenda:$('#fl').value});await load();ficha(id,'fotos')}
+async function delFoto(fid){const f=S.fotos.find(x=>x.id==fid);if(!confirm('Excluir foto?'))return;if(sb&&!f.path.startsWith('data:'))await sb.storage.from('fotos-pacientes').remove([f.path]);await db.del('fotos',fid);await load();ficha(f.paciente_id,'fotos')}
+/* ===== GOOGLE AGENDA (somente com autorizacao do usuario) ===== */
+let gTok=null,gBusy=false;
+try{const s=JSON.parse(sessionStorage.getItem('sp_gt')||'null');if(s&&s.exp>Date.now())gTok=s.t}catch(e){}
+function gConectar(){const c=cfg();if(!c.gclient)return alert('Informe o Client ID do Google em Configurações.');const id=c.gclient;if(!/^\d+-[\w-]+\.apps\.googleusercontent\.com$/i.test(id))return alert('O Client ID salvo não parece válido (deve terminar em .apps.googleusercontent.com). Valor atual: '+id);console.log('Client ID enviado ao Google:',id);if(!window.google)return alert('Biblioteca do Google ainda carregando, tente novamente.');
+ google.accounts.oauth2.initTokenClient({client_id:c.gclient,scope:'https://www.googleapis.com/auth/calendar.events',callback:r=>{if(r.error)return alert('Google: '+r.error);gTok=r.access_token;sessionStorage.setItem('sp_gt',JSON.stringify({t:gTok,exp:Date.now()+(r.expires_in-60)*1000}));if(view=='agenda')vAgenda();gSync()}}).requestAccessToken()}
+const gUrl=()=>`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cfg().gcal||'primary')}/events`;
+async function gApi(m,id,body){const r=await fetch(gUrl()+(id?'/'+id:''),{method:m,headers:{Authorization:'Bearer '+gTok,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+ if(r.status==401){gTok=null;sessionStorage.removeItem('sp_gt');if(view=='agenda')vAgenda();throw new Error('Sessão do Google expirada. Clique em Conectar Google Agenda.')}
+ if(r.status==404||r.status==410)return null;if(!r.ok)throw new Error('Google Agenda erro '+r.status);return r.status==204?{}:r.json()}
+const gSig=c=>[c.data,c.hora,c.duracao,c.status,c.procedimento,c.profissional_nome,c.cadeira].join('|');
+function gEv(c){const[a,b]=(c.hora||'00:00').split(':'),m=a*60+ +b+(c.duracao||30),z=n=>String(n).padStart(2,'0');
+ return{summary:`${primeiro(c.paciente_nome)} - ${c.procedimento||'Consulta'}`,description:`${c.profissional_nome||''} ${c.cadeira||''}\nStatus: ${c.status}`.trim(),start:{dateTime:`${c.data}T${z(a)}:${z(b)}:00`,timeZone:'America/Sao_Paulo'},end:{dateTime:`${c.data}T${z(Math.min(23,Math.floor(m/60)))}:${z(m%60)}:00`,timeZone:'America/Sao_Paulo'}}}
+let gP=[];
+const gH=c=>(c.hora||'').slice(0,5),gLbl=c=>`${c.paciente_nome} ${dbr(c.data)} ${gH(c)}`;
+const GT={new:'→ Google',upd:'→ Google',del:'→ Google',pnew:'← Sistema',pupd:'← Sistema',pcanc:'← Sistema'};
+/* Somente LEITURA: monta a lista de alteracoes possiveis. Nada e gravado aqui. */
+async function gPlan(){const P=[];
+ for(const c of S.consultas){
+  if(c.status=='cancelada'){if(c.google_event_id)P.push({t:'del',c,txt:'Excluir do Google: '+gLbl(c)});continue}
+  if(!c.data||(c.data<hoje()&&!c.google_event_id))continue;
+  if(!c.google_event_id)P.push({t:'new',c,txt:'Criar no Google: '+gLbl(c)});
+  else if(c.google_sig!=gSig(c))P.push({t:'upd',c,txt:'Atualizar no Google: '+gLbl(c)})}
+ if(cfg().gimp!='nao'){const ev=await gList(),by={};S.consultas.forEach(c=>{if(c.google_event_id)by[c.google_event_id]=c});
+  for(const e of ev){const c=by[e.id];
+   if(e.status=='cancelled'){if(c&&c.status!='cancelada')P.push({t:'pcanc',c,txt:'Cancelar no sistema (removida no Google): '+gLbl(c)});continue}
+   if(!e.start?.dateTime||!e.end?.dateTime)continue;
+   const data=e.start.dateTime.slice(0,10),hora=e.start.dateTime.slice(11,16),dur=Math.max(5,Math.round((new Date(e.end.dateTime)-new Date(e.start.dateTime))/6e4));
+   if(c){if(c.status=='cancelada'||c.google_sig!=gSig(c))continue;if(c.data!=data||gH(c)!=hora||(c.duracao||30)!=dur)P.push({t:'pupd',c,data,hora,dur,txt:`Atualizar no sistema (alterada no Google): ${c.paciente_nome} ${dbr(c.data)} ${gH(c)} → ${dbr(data)} ${hora}`});continue}
+   const tt=String(e.summary||'Sem título'),i=tt.indexOf(' - '),nome=(i>0?tt.slice(0,i):tt).trim(),proc=i>0?tt.slice(i+3).trim():'',p=achaPac(nome);
+   P.push({t:'pnew',e,data,hora,dur,nome:p?.nome||nome,pid:p?.id||null,proc,txt:`Importar para o sistema: ${p?.nome||nome} ${dbr(data)} ${hora}`})}}
+ return P}
+async function gSync(){if(!gTok)return gConectar();if(gBusy)return;gBusy=true;
+ try{gP=await gPlan();if(!gP.length)return alert('Google Agenda e sistema já estão alinhados. Nada a alterar.');gRev()}
+ catch(e){alert(e.message)}finally{gBusy=false}}
+function gRev(){if(view!='agenda'){view='agenda';render()}
+ $('#f').innerHTML=`<div class="card"><h3>Alterações pendentes com o Google Agenda</h3><p style="color:var(--m)">Nada é enviado ao Google nem alterado no sistema sem a sua autorização. Marque apenas o que deseja aplicar.</p><table>${opts(gP,(x,i)=>`<tr><td style="width:30px"><input type="checkbox" class="gk" id="gk${i}" style="width:auto"></td><td><span class="tag ${x.t=='del'?'no':''}">${GT[x.t]}</span></td><td><label for="gk${i}">${esc(x.txt)}</label></td></tr>`)}</table><div class="row" style="margin-top:8px"><button class="s" onclick="document.querySelectorAll('.gk').forEach(k=>k.checked=true)">Marcar todas</button><button onclick="gApply()">Aplicar selecionadas</button><button class="s" onclick="$('#f').innerHTML=''">Fechar sem alterar</button></div></div>`;$('#f').scrollIntoView()}
+async function gApply(){const sel=gP.filter((x,i)=>$('#gk'+i)?.checked);if(!sel.length)return alert('Nenhuma alteração selecionada.');
+ if(!confirm(`Aplicar ${sel.length} alteração(ões) selecionada(s)?`))return;gBusy=true;let n=0;
+ try{for(const x of sel){const c=x.c;
+   if(x.t=='new'){const r=await gApi('POST','',gEv(c));if(r){await db.save('consultas',{id:c.id,google_event_id:r.id,google_sig:gSig(c)});n++}}
+   else if(x.t=='upd'){let r=await gApi('PATCH',c.google_event_id,gEv(c));if(!r)r=await gApi('POST','',gEv(c));await db.save('consultas',{id:c.id,google_event_id:r.id||c.google_event_id,google_sig:gSig(c)});n++}
+   else if(x.t=='del'){await gApi('DELETE',c.google_event_id);await db.save('consultas',{id:c.id,google_event_id:null,google_sig:null});n++}
+   else if(x.t=='pcanc'){await db.save('consultas',{id:c.id,status:'cancelada'});n++}
+   else if(x.t=='pupd'){const o={...c,data:x.data,hora:x.hora,duracao:x.dur};await db.save('consultas',{id:c.id,data:x.data,hora:x.hora,duracao:x.dur,google_sig:gSig(o)});n++}
+   else if(x.t=='pnew'){const o={paciente_id:x.pid,paciente_nome:x.nome,data:x.data,hora:x.hora,duracao:x.dur,procedimento:x.proc,valor:0,status:'agendada',pago:false,google_event_id:x.e.id};o.google_sig=gSig(o);await db.save('consultas',o);n++}}
+  alert(n+' alteração(ões) aplicada(s).')}
+ catch(e){alert(e.message)}finally{gBusy=false}await load()}
+async function gDel(id){const c=S.consultas.find(x=>x.id==id);if(gTok&&c?.google_event_id&&confirm('Esta consulta está no Google Agenda. Excluir também o evento de lá?')){try{await gApi('DELETE',c.google_event_id)}catch(e){alert(e.message)}}}
+/* ===== GOOGLE AGENDA -> SISTEMA (importacao) ===== */
+const norm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+function achaPac(n){const k=norm(n);if(!k)return null;let l=S.pacientes.filter(p=>norm(p.nome)==k);if(l.length!=1)l=S.pacientes.filter(p=>norm(p.nome).split(' ')[0]==k);if(l.length!=1)l=S.pacientes.filter(p=>norm(p.nome).startsWith(k));return l.length==1?l[0]:null}
+async function gList(){let items=[],pt='';const a=new Date();a.setDate(a.getDate()-1);const b=new Date();b.setDate(b.getDate()+90);
+ do{const q=new URLSearchParams({singleEvents:'true',showDeleted:'true',maxResults:'250',timeZone:'America/Sao_Paulo',timeMin:a.toISOString(),timeMax:b.toISOString()});if(pt)q.set('pageToken',pt);
+  const r=await fetch(gUrl()+'?'+q,{headers:{Authorization:'Bearer '+gTok}});
+  if(r.status==401){gTok=null;sessionStorage.removeItem('sp_gt');if(view=='agenda')vAgenda();throw new Error('Sessão do Google expirada. Clique em Conectar Google Agenda.')}
+  if(!r.ok)throw new Error('Google Agenda erro '+r.status);const j=await r.json();items=items.concat(j.items||[]);pt=j.nextPageToken||''}while(pt);return items}
+async function vinc(id){const p=S.pacientes.find(x=>x.id==$('#vp').value);if(!p)return alert('Cadastre o paciente primeiro');await db.save('consultas',{id,paciente_id:p.id,paciente_nome:p.nome});await load()}
+/* ===== MARKETING ORGANICO ===== */
+let mkTab='cal',plano=[];
+const REDES=['Instagram','Facebook','TikTok','Google Meu Negócio'],FORM=['Reels','Carrossel','Post','Stories','Texto'],PSTS=['ideia','pronto','publicado'];
+const sysMkt=()=>ctx()+` Você cria conteúdo de marketing orgânico seguindo o Código de Ética Odontológica do CFO: sem antes e depois, sem promessa de resultado, sem preços ou promoções, sem sensacionalismo; foque em educação em saúde bucal e confiança. Foco da clínica: ${cfg().foco||'odontologia geral'}. Instagram: ${cfg().insta||'não informado'}.`;
+function vMkt(){const T=[['cal','Calendário de conteúdo'],['ia','Plano com IA'],['img','Criar imagem'],['aval','Avaliações Google'],['orig','Origem dos leads']];
+ $('main').innerHTML=`<div class="row">${T.map(([k,l])=>`<button class="${k==mkTab?'':'s'}" onclick="mkTab='${k}';vMkt()">${l}</button>`).join('')}</div><div id="mt"></div>`;
+ ({cal:mCal,ia:mIa,img:mImg,aval:mAval,orig:mOrig}[mkTab])()}
+function mCal(){const h=hoje(),m=h.slice(0,7),P=[...S.posts].sort((a,b)=>(a.data||'9').localeCompare(b.data||'9')),prox=P.some(p=>p.data>=h&&p.data<=addDias(7)&&p.status!='publicado');
+ $('#mt').innerHTML=`${prox?'':'<div class="card" style="border-color:#f59e0b">Nenhum post planejado para os próximos 7 dias. Use o Plano com IA para preencher o calendário.</div>'}<div class="kpis"><div class="card"><b>${S.posts.filter(p=>(p.data||'').startsWith(m)).length}</b><span>Posts no mês</span></div><div class="card"><b>${S.posts.filter(p=>p.status=='publicado'&&(p.data||'').startsWith(m)).length}</b><span>Publicados no mês</span></div><div class="card"><b>${S.posts.filter(p=>p.status!='publicado'&&p.data>=h).length}</b><span>Pendentes</span></div></div>
+ <div class="card"><h3>Novo post</h3><div class="row"><input id="pd" type="date" value="${h}"><select id="pr">${opts(REDES,r=>`<option>${r}</option>`)}</select><select id="pf">${opts(FORM,r=>`<option>${r}</option>`)}</select></div><div class="row"><input id="pt" placeholder="Tema (ex.: 3 erros ao escovar os dentes)"><button class="s" onclick="legIA()">🤖 Gerar legenda</button></div><textarea id="pl" rows="4" placeholder="Legenda"></textarea><div class="row" style="margin-top:8px"><input id="ph" placeholder="Hashtags"><button onclick="sPost()">Salvar no calendário</button></div></div>
+ <div class="card"><table><tr><th>Data</th><th>Rede</th><th>Formato</th><th>Tema</th><th>Status</th><th></th></tr>${opts(P,p=>`<tr><td>${esc(p.data)}</td><td>${esc(p.rede)}</td><td>${esc(p.formato)}</td><td>${esc(p.tema)}</td><td><select onchange="stPost('${p.id}',this.value)">${opts(PSTS,s=>`<option ${s==p.status?'selected':''}>${s}</option>`)}</select></td><td style="white-space:nowrap"><button class="s" onclick="cpPost('${p.id}')">Copiar</button> <button class="s" onclick="imgDePost('${p.id}')">Imagem</button> <button class="d" onclick="delPost('${p.id}')">x</button></td></tr>`)||'<tr><td colspan=6>Nenhum post. Se a tabela "posts" não existir no Supabase, rode o SQL atualizado.</td></tr>'}</table></div>`}
+async function legIA(){const t=$('#pt').value.trim();if(!t)return alert('Informe o tema');const b=$('#pl');b.value='Gerando...';
+ try{const r=await gemini(`Crie uma legenda para ${$('#pr').value} (${$('#pf').value}) sobre: ${t}. Tom acolhedor, linguagem simples, termine convidando a agendar uma avaliação pelo WhatsApp. Depois, em uma linha separada começando com HASHTAGS:, sugira 8 hashtags.`,sysMkt());const[l,h]=r.split(/HASHTAGS:/i);b.value=l.trim();$('#ph').value=(h||'').trim()}catch(e){b.value='';alert(e.message)}}
+async function sPost(){const tema=$('#pt').value.trim();if(!tema)return alert('Informe o tema');await db.save('posts',{data:$('#pd').value||null,rede:$('#pr').value,formato:$('#pf').value,tema,legenda:$('#pl').value,hashtags:$('#ph').value,status:'ideia'});await load()}
+async function stPost(id,s){await db.save('posts',{id,status:s});await load()}
+async function delPost(id){if(confirm('Excluir post?')){await db.del('posts',id);await load()}}
+function cpPost(id){const p=S.posts.find(x=>x.id==id);navigator.clipboard.writeText((p.legenda||'')+'\n\n'+(p.hashtags||'')).then(()=>alert('Legenda copiada'))}
+function mIa(){$('#mt').innerHTML=`<div class="card"><h3>Plano de conteúdo com IA</h3><p style="color:var(--m)">A IA monta um calendário de posts para as próximas semanas (educação, bastidores, mitos e verdades, datas da saúde bucal), respeitando as regras do CFO. Revise antes de publicar.</p><div class="row"><input id="mq" type="number" min="4" max="20" value="12" title="Quantidade de posts"><select id="mr">${opts(REDES,r=>`<option>${r}</option>`)}</select><input id="mf" placeholder="Foco do período (ex.: clareamento, Novembro Azul)"><button onclick="gPlano()">Gerar plano</button></div><div id="pv"></div></div>`;rPlano()}
+async function gPlano(){const el=$('#pv');el.textContent='Gerando...';
+ try{const r=await gemini(`Crie um plano de ${$('#mq').value||12} publicações orgânicas para ${$('#mr').value} a partir de ${hoje()}, distribuídas nas próximas 4 semanas, mesclando educação, bastidores, mitos e verdades, dicas de prevenção e datas comemorativas da saúde bucal no Brasil. Foco: ${$('#mf').value||'geral'}. Responda SOMENTE um array JSON, sem markdown, com objetos {"data":"YYYY-MM-DD","formato":"Reels|Carrossel|Post|Stories","tema":"...","legenda":"...","hashtags":"#a #b"}.`,sysMkt());
+  const j=JSON.parse(r.slice(r.indexOf('['),r.lastIndexOf(']')+1));plano=j.map(x=>({data:/^\d{4}-\d\d-\d\d$/.test(x.data)?x.data:null,rede:$('#mr').value,formato:FORM.includes(x.formato)?x.formato:'Post',tema:x.tema||'',legenda:x.legenda||'',hashtags:x.hashtags||''}));rPlano()}
+ catch(e){el.textContent='Não consegui gerar o plano: '+e.message}}
+function rPlano(){const el=$('#pv');if(!el)return;el.innerHTML=plano.length?`<div class="row"><button onclick="addPlano()">Adicionar ${plano.length} posts ao calendário</button></div><table>${opts(plano,x=>`<tr><td>${esc(x.data)}</td><td>${esc(x.formato)}</td><td><b>${esc(x.tema)}</b><br><small>${esc(x.legenda)}</small></td></tr>`)}</table>`:''}
+async function addPlano(){for(const x of plano)await db.save('posts',{...x,status:'ideia'});plano=[];mkTab='cal';await load()}
+function mAval(){const g=cfg().glink,L=new Set(S.log.filter(l=>l.tipo=='avaliacao').map(l=>l.ref)),seen=new Set(),f=[];
+ S.consultas.filter(c=>c.status=='realizada'&&c.paciente_id&&c.data>=addDias(-14)&&!L.has(c.paciente_id)).forEach(c=>{if(!seen.has(c.paciente_id)){seen.add(c.paciente_id);f.push(c)}});
+ $('#mt').innerHTML=`<div class="card"><h3>Pedir avaliação no Google</h3><p style="color:var(--m)">Avaliações no Google Meu Negócio são o maior motor de busca local. Aqui aparecem os pacientes atendidos nos últimos 14 dias que ainda não receberam o pedido. O pedido vai para todos os atendidos, sem filtrar por nota, como exige a política do Google.</p>${g?'':'<p style="color:var(--r)">Informe o link de avaliação em Configurações.</p>'}<table><tr><th>Paciente</th><th>Atendimento</th><th></th></tr>${opts(f,c=>`<tr><td>${esc(c.paciente_nome)}</td><td>${esc(c.data)}</td><td><button onclick="pedirAval('${c.paciente_id}')">Pedir avaliação</button></td></tr>`)||'<tr><td colspan=3>Ninguém pendente.</td></tr>'}</table></div>`}
+async function pedirAval(pid){const p=S.pacientes.find(x=>x.id==pid),g=cfg().glink;if(!g)return alert('Informe o link de avaliação do Google em Configurações.');if(!p?.telefone)return alert('Paciente sem telefone cadastrado');
+ wa(p.telefone,`Olá, ${primeiro(p.nome)}! Foi um prazer atender você na ${clin()}. Se puder, deixe sua avaliação sobre o atendimento. Leva menos de 1 minuto e ajuda muito a clínica: ${g}`);
+ await db.save('mensagens_log',{tipo:'avaliacao',ref:pid,paciente_nome:p.nome});await load()}
+function mOrig(){const o={};S.leads.forEach(l=>{const k=(l.origem||'').trim()||'Não informada';o[k]=o[k]||{n:0,f:0};o[k].n++;if(l.etapa=='Fechado')o[k].f++});const R=Object.entries(o).sort((a,b)=>b[1].n-a[1].n);
+ $('#mt').innerHTML=`<div class="card"><h3>De onde vêm os pacientes</h3><table><tr><th>Origem</th><th>Leads</th><th>Fechados</th><th>Conversão</th></tr>${opts(R,([k,v])=>`<tr><td>${esc(k)}</td><td>${v.n}</td><td>${v.f}</td><td>${Math.round(v.f/v.n*100)}%</td></tr>`)||'<tr><td colspan=4>Cadastre leads no CRM informando a origem.</td></tr>'}</table></div><div class="card"><button onclick="anaOrig()">🤖 Sugerir onde focar o conteúdo</button><p id="ao" style="white-space:pre-wrap"></p></div>`}
+async function anaOrig(){const el=$('#ao');el.textContent='Gerando...';const o={};S.leads.forEach(l=>{const k=l.origem||'Não informada';o[k]=o[k]||{leads:0,fechados:0,interesses:[]};o[k].leads++;if(l.etapa=='Fechado')o[k].fechados++;if(l.interesse)o[k].interesses.push(l.interesse)});
+ try{el.textContent=await gemini('Com base na origem, conversão e interesses destes leads, diga quais canais priorizar no marketing orgânico e sugira 5 temas de conteúdo: '+JSON.stringify(o),sysMkt())}catch(e){el.textContent=e.message}}
+/* ===== CRIAR IMAGENS (marketing) - estudio de artes ===== */
+let imgBg=null,imgLogo=null,imgLeg='',imgI=0,imgSl=[],imgTm,imgSt={fmt:'feed',tema:'marca',lay:'centro',bg:'bolhas',fonte:'mod',cor:'#0f766e',rt:null,init:0};
+const novoSl=o=>({tpl:'dica',t:'',s:'',c:'',mito:'',ver:'',itens:'',...o});
+const FMT={feed:[1080,1350,'4:5','Feed retrato (1080×1350)'],quad:[1080,1080,'1:1','Quadrado (1080×1080)'],story:[1080,1920,'9:16','Stories e Reels (1080×1920)']};
+const TPL={dica:'Dica / Capa',destaque:'Destaque',mito:'Mito ou verdade',lista:'Lista'};
+const FIELDS={dica:[['t','Título','i'],['s','Subtítulo','a'],['c','Chamada (botão)','i']],destaque:[['t','Frase de destaque','a'],['s','Complemento ou assinatura','i']],mito:[['t','Título (opcional)','i'],['mito','Mito','a'],['ver','Verdade','a']],lista:[['t','Título','i'],['itens','Itens (um por linha, até 7)','a']]};
+const ESTILOS={marca:'Cor da marca',escuro:'Escuro',claro:'Claro',branco:'Branco limpo'};
+const FONTS={mod:{n:'Moderna (Poppins)',h:'Poppins',b:'Poppins'},lim:{n:'Clean (Montserrat)',h:'Montserrat',b:'Montserrat'},ele:{n:'Elegante (Playfair + Poppins)',h:'"Playfair Display"',b:'Poppins'}};
+const BGS={grad:'Degradê',bolhas:'Bolhas',ondas:'Ondas',dente:'Dente estilizado',geo:'Geométrico'};
+if(typeof document!='undefined'&&document.head&&document.createElement){const l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800&family=Playfair+Display:wght@700;800&family=Poppins:wght@400;600;800&display=swap';document.head.appendChild(l)}
+async function imgFonts(){try{await Promise.all(['400 40px Poppins','600 40px Poppins','800 40px Poppins','400 40px Montserrat','600 40px Montserrat','800 40px Montserrat','700 40px "Playfair Display"'].map(f=>document.fonts.load(f)))}catch(e){}}
+const loadImg=src=>new Promise((ok,no)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=()=>no(new Error('Imagem inválida'));i.src=src});
+async function cfgSet(p){if(sb){const dados={...RC,...p},{error}=await sb.from('configuracoes').upsert({id:'clinica',dados,updated_at:new Date().toISOString()});if(error)throw error;RC=dados}else localStorage.setItem('sp_cfg',JSON.stringify({...cfgLocal(),...p}))}
+const imgPersist=()=>cfgSet({cor:imgSt.cor,fonte:imgSt.fonte}).catch(()=>{});
+/* ---- IA de imagem (opcional, exige faturamento no Google AI) ---- */
+function achaImg(o){if(!o||typeof o!='object')return null;
+ const d=o.data||o.inlineData?.data||o.inline_data?.data;
+ if(typeof d=='string'&&d.length>500&&/^[A-Za-z0-9+\/=\s]+$/.test(d.slice(0,200))&&(o.type==undefined||o.type=='image'||o.inlineData||o.inline_data)){
+  const m=o.mime_type||o.mimeType||o.inlineData?.mimeType||o.inline_data?.mime_type||'image/png';return 'data:'+(String(m).startsWith('image')?m:'image/png')+';base64,'+d.replace(/\s/g,'')}
+ for(const v of Object.values(o)){const r=achaImg(v);if(r)return r}return null}
+async function geminiImg(prompt,ratio){const k=cfg().gemini;if(!k)throw new Error('Configure a chave Gemini em Configurações.');const model=cfg().modeloImg||'gemini-nano-banana-2.1',base='https://generativelanguage.googleapis.com/v1beta/';
+ const A=[[base+'interactions',{model,input:[{type:'text',text:prompt}],response_format:{type:'image',mime_type:'image/jpeg',aspect_ratio:ratio}}],
+  [base+'interactions',{model,input:[{type:'text',text:prompt+' Aspect ratio '+ratio+'.'}]}],
+  [`${base}models/${model}:generateContent`,{contents:[{parts:[{text:prompt}]}],generationConfig:{responseModalities:['IMAGE'],imageConfig:{aspectRatio:ratio}}}]];
+ let err='';
+ for(const[u,b]of A){try{const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},body:JSON.stringify(b)});
+   if(!r.ok){const e=await r.text().catch(()=>'');err='Gemini imagem '+r.status+(e?': '+e.slice(0,200):'');if(r.status==401||r.status==403||r.status==429)break;continue}
+   const f=achaImg(await r.json());if(f)return f;err='A resposta do Gemini não trouxe imagem.'}catch(e){err=e.message}}
+ if(/free tier|limit: 0|429/i.test(err))throw new Error('A geração de imagens por IA não está disponível no plano gratuito do Google AI. Para usar, ative o faturamento em aistudio.google.com (custo aproximado de US$ 0,03 por imagem). Enquanto isso, escolha um "Fundo pronto" ou envie sua própria imagem.');
+ throw new Error(err+' (confira o modelo de imagem em Configurações)')}
+/* ---- cores ---- */
+const hx=h=>[1,3,5].map(i=>parseInt(String(h).slice(i,i+2),16)||0);
+const mix=(a,b,k)=>'#'+hx(a).map((v,i)=>Math.round(v+(hx(b)[i]-v)*k).toString(16).padStart(2,'0')).join('');
+function temaI(){const c=imgSt.cor,k=imgSt.tema;
+ if(k=='escuro')return{a:'#111827',b:'#030712',t:'#ffffff',c:mix(c,'#ffffff',.55),pt:'#06201d',card:'#1f2937',ct:'#ffffff'};
+ if(k=='claro')return{a:'#f8fafc',b:'#e2e8f0',t:'#0f172a',c:c,pt:'#ffffff',card:'#ffffff',ct:'#0f172a'};
+ if(k=='branco')return{a:'#ffffff',b:'#f1f5f9',t:'#0f172a',c:c,pt:'#ffffff',card:'#f1f5f9',ct:'#0f172a'};
+ return{a:c,b:mix(c,'#000000',.38),t:'#ffffff',c:mix(c,'#ffffff',.74),pt:mix(c,'#000000',.62),card:'#ffffff',ct:'#0f172a'}}
+/* ---- fundos prontos ---- */
+function seedRnd(s){return()=>(s=(s*16807)%2147483647)/2147483647}
+function toothPath(g,x,y,s){g.save();g.translate(x,y);g.scale(s,s);g.beginPath();g.moveTo(0,-45);
+ g.bezierCurveTo(15,-55,40,-50,45,-25);g.bezierCurveTo(50,-5,38,10,35,30);g.bezierCurveTo(32,50,28,60,20,55);g.bezierCurveTo(12,50,10,25,0,25);
+ g.bezierCurveTo(-10,25,-12,50,-20,55);g.bezierCurveTo(-28,60,-32,50,-35,30);g.bezierCurveTo(-38,10,-50,-5,-45,-25);g.bezierCurveTo(-40,-50,-15,-55,0,-45);g.closePath();g.fill();g.restore()}
+function drawBg(g,W,H,rgb){const R=seedRnd(12345),f=a=>`rgba(${rgb},${a})`,st=imgSt.bg;
+ if(st=='bolhas'){for(let i=0;i<22;i++){const r=W*(.02+R()*.09),x=R()*W,y=R()*H;g.fillStyle=f(.05+R()*.08);g.beginPath();g.arc(x,y,r,0,7);g.fill();g.strokeStyle=f(.12);g.lineWidth=W*.003;g.stroke()}}
+ else if(st=='ondas'){for(let i=0;i<4;i++){const b=H*(.5+i*.12),a=H*.025;g.fillStyle=f(.06+i*.025);g.beginPath();g.moveTo(0,H);g.lineTo(0,b);for(let x=0;x<=W;x+=12)g.lineTo(x,b+Math.sin(x/W*Math.PI*2+i*1.3)*a);g.lineTo(W,H);g.closePath();g.fill()}}
+ else if(st=='dente'){g.fillStyle=f(.1);toothPath(g,W*.74,H*.3,W*.0072*4.2);g.fillStyle=f(.06);toothPath(g,W*.16,H*.78,W*.0072*2.2);g.fillStyle=f(.05);toothPath(g,W*.9,H*.82,W*.0072*1.3)}
+ else if(st=='geo'){for(let i=0;i<5;i++){g.fillStyle=f(.05+i*.012);g.beginPath();g.moveTo(W*(.15*i),0);g.lineTo(W*(.15*i+.5),0);g.lineTo(W*(.15*i-.1),H);g.lineTo(W*(.15*i-.6),H);g.closePath();g.fill()}}
+ else{g.fillStyle=f(.08);g.beginPath();g.arc(W*.9,H*.12,W*.35,0,7);g.fill();g.beginPath();g.arc(W*.05,H*.95,W*.3,0,7);g.fill()}}
+/* ---- texto: quebra de linha com destaque *palavra* e ajuste automatico ---- */
+function toks(t){const o=[];let hl=false;String(t||'').split(/\s+/).filter(Boolean).forEach(ch=>{const segs=[];ch.split(/(\*)/).forEach(p=>{if(p=='*')hl=!hl;else if(p)segs.push({w:p,hl})});if(segs.length)o.push(segs)});return o}
+function wrapR(g,t,mw){const sp=g.measureText(' ').width,L=[];let cur=null;
+ for(const segs of toks(t)){segs.forEach(s=>s.wd=g.measureText(s.w).width);const wd=segs.reduce((a,s)=>a+s.wd,0),x={segs,wd};
+  if(cur&&cur.width+sp+wd>mw){L.push(cur);cur=null}
+  if(!cur)cur={words:[x],width:wd,sp};else{cur.words.push(x);cur.width+=sp+wd}}
+ if(cur)L.push(cur);return L}
+function fitTxt(g,txt,mw,maxH,fs0,min,font,lhk){let fs=fs0,L,lh;for(;;){g.font=font(fs);L=wrapR(g,txt,mw);lh=fs*lhk;if(L.length*lh<=maxH||fs<=min)break;fs*=.93}return{fs,L,lh,h:L.length*lh}}
+function drawL(g,A,x,y,col,acc,mw,center){A.L.forEach(l=>{let sx=center?x+(mw-l.width)/2:x;l.words.forEach(o=>{o.segs.forEach(s=>{g.fillStyle=s.hl?acc:col;g.fillText(s.w,sx,y);sx+=s.wd});sx+=l.sp});y+=A.lh});return y}
+function rrect(g,x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath()}
+/* ---- desenho de um slide (tudo relativo a W, serve para previa, miniatura e exportacao) ---- */
+function drawSlide(g,W,H,s,idx,n){
+ const T=temaI(),FT=FONTS[imgSt.fonte]||FONTS.mod,F=(w,z,h)=>`${w} ${z}px ${h?FT.h:FT.b},system-ui,Arial,sans-serif`,hasBg=!!imgBg,light=!hasBg&&(imgSt.tema=='claro'||imgSt.tema=='branco');
+ const gr=g.createLinearGradient(0,0,W,H);gr.addColorStop(0,T.a);gr.addColorStop(1,T.b);g.fillStyle=gr;g.fillRect(0,0,W,H);
+ if(hasBg){const k=Math.max(W/imgBg.width,H/imgBg.height),w=imgBg.width*k,h=imgBg.height*k;g.drawImage(imgBg,(W-w)/2,(H-h)/2,w,h);
+  const ov=g.createLinearGradient(0,0,0,H);ov.addColorStop(0,'rgba(0,0,0,.5)');ov.addColorStop(.5,'rgba(0,0,0,.4)');ov.addColorStop(1,'rgba(0,0,0,.75)');g.fillStyle=ov;g.fillRect(0,0,W,H)}
+ else drawBg(g,W,H,light?hx(imgSt.cor).join(','):'255,255,255');
+ const tc=hasBg?'#ffffff':T.t,acc=hasBg?mix(imgSt.cor,'#ffffff',.74):T.c,pt=hasBg?'#0b1b19':T.pt,cardF=hasBg?'#ffffff':T.card,cardT=hasBg?'#0f172a':T.ct;
+ const m=W*.08,mw=W-2*m,story=imgSt.fmt=='story',st=story?W*.16:0,sbm=story?W*.18:0;
+ g.textAlign='left';g.textBaseline='top';g.globalAlpha=1;
+ if(imgLogo){const h=W*.085,w=Math.min(imgLogo.width/imgLogo.height*h,W*.38);g.drawImage(imgLogo,m,m+st,w,w/imgLogo.width*imgLogo.height)}
+ else{g.fillStyle=tc;g.font=F(700,W*.03,1);g.fillText(clin().toUpperCase(),m,m+st+W*.01)}
+ if(n>1){const tx=`${idx+1}/${n}`;g.font=F(600,W*.028);const w=g.measureText(tx).width+W*.05,h=W*.055;g.fillStyle=acc;rrect(g,W-m-w,m+st,w,h,h/2);g.fill();g.fillStyle=pt;g.textBaseline='middle';g.textAlign='center';g.fillText(tx,W-m-w/2,m+st+h/2);g.textAlign='left';g.textBaseline='top'}
+ /* rodape */
+ const rt=imgSt.rt,fl=W*.028,fl2=W*.024;let fb=H-m-sbm;g.textBaseline='bottom';g.fillStyle=tc;g.globalAlpha=.85;
+ if(rt){g.font=F(400,fl2);g.fillText('Resp. técnico: '+rt,m,fb);fb-=W*.04}
+ g.font=F(600,fl);g.fillText([clin(),cfg().insta||''].filter(Boolean).join('  •  '),m,fb);
+ const ftop=fb-fl-W*.025;g.globalAlpha=.25;g.fillRect(m,ftop,mw,W*.002);g.globalAlpha=1;
+ if(n>1&&idx<n-1){g.textAlign='right';g.font=F(700,fl);g.fillStyle=acc;g.fillText('ARRASTE  ›',W-m,H-m-sbm);g.textAlign='left'}
+ g.textBaseline='top';
+ const y0=m+st+W*.13,y1=ftop-W*.045,h=y1-y0,gap=W*.04;
+ if(hasBg){g.shadowColor='rgba(0,0,0,.35)';g.shadowBlur=W*.012}
+ if(s.tpl=='destaque'){
+  const A=fitTxt(g,s.t,mw,h*.55,W*.075,W*.04,z=>F(700,z,1),1.25),B=s.s?fitTxt(g,s.s,mw,h*.15,W*.034,W*.026,z=>F(600,z),1.3):{L:[],h:0},q=W*.2;
+  const bh=q*.55+A.h+(B.L.length?gap+B.h:0);let y=y0+Math.max(0,(h-bh)/2);
+  g.fillStyle=acc;g.font=F(800,q,1);g.textAlign='center';g.fillText('“',W/2,y-q*.12);g.textAlign='left';y+=q*.55;
+  g.font=F(700,A.fs,1);y=drawL(g,A,m,y,tc,acc,mw,true);
+  if(B.L.length){y+=gap;g.font=F(600,B.fs);g.globalAlpha=.9;drawL(g,B,m,y,tc,acc,mw,true);g.globalAlpha=1}}
+ else if(s.tpl=='mito'){
+  const A=s.t?fitTxt(g,s.t,mw,h*.16,W*.07,W*.045,z=>F(800,z,1),1.15):{L:[],h:0},pad=W*.04,tagH=W*.052,inner=mw-2*pad,avail=h-(A.L.length?A.h+gap:0)-gap,ch=avail/2;
+  const mk=txt=>fitTxt(g,txt||'',inner,ch-pad*2-tagH-W*.02,W*.05,W*.03,z=>F(600,z),1.3);
+  const X1=mk(s.mito),X2=mk(s.ver),c1=pad*2+tagH+W*.02+X1.h,c2=pad*2+tagH+W*.02+X2.h,tot=(A.L.length?A.h+gap:0)+c1+gap+c2;let y=y0+Math.max(0,(h-tot)/2);
+  if(A.L.length){g.font=F(800,A.fs,1);y=drawL(g,A,m,y,tc,acc,mw,false)+gap}
+  g.shadowColor='transparent';g.shadowBlur=0;
+  const card=(X,hh,tag,col,txt)=>{g.fillStyle=cardF;g.globalAlpha=hasBg?.96:1;rrect(g,m,y,mw,hh,W*.03);g.fill();g.globalAlpha=1;
+   g.font=F(700,W*.027);const tw=g.measureText(tag).width+W*.05;g.fillStyle=col;rrect(g,m+pad,y+pad,tw,tagH,tagH/2);g.fill();
+   g.fillStyle='#ffffff';g.textBaseline='middle';g.fillText(tag,m+pad+W*.025,y+pad+tagH/2);g.textBaseline='top';
+   g.font=F(600,X.fs);drawL(g,X,m+pad,y+pad+tagH+W*.02,cardT,col,inner,false);y+=hh+gap};
+  card(X1,c1,'✕  MITO','#ef4444');card(X2,c2,'✓  VERDADE','#16a34a')}
+ else if(s.tpl=='lista'){
+  const items=String(s.itens||'').split(/\n/).map(x=>x.trim()).filter(Boolean).slice(0,7),A=s.t?fitTxt(g,s.t,mw,h*.22,W*.075,W*.045,z=>F(800,z,1),1.12):{L:[],h:0};
+  const d=W*.07,gx=W*.035,rg=W*.03,avail=h-(A.L.length?A.h+gap:0),tw=mw-d-gx;let fs=W*.046,rows=[],tot=0;
+  for(;;){g.font=F(600,fs);rows=items.map(x=>wrapR(g,x,tw));tot=rows.reduce((a,L)=>a+Math.max(d,L.length*fs*1.28),0)+rg*Math.max(0,rows.length-1);if(tot<=avail||fs<=W*.028)break;fs*=.93}
+  let y=y0+Math.max(0,(h-tot-(A.L.length?A.h+gap:0))/2);
+  if(A.L.length){g.font=F(800,A.fs,1);y=drawL(g,A,m,y,tc,acc,mw,false)+gap}
+  rows.forEach((L,i)=>{const lh=fs*1.28,rh=Math.max(d,L.length*lh);
+   g.shadowColor='transparent';g.shadowBlur=0;g.fillStyle=acc;g.beginPath();g.arc(m+d/2,y+rh/2,d/2,0,7);g.fill();
+   g.fillStyle=pt;g.font=F(800,d*.5,1);g.textAlign='center';g.textBaseline='middle';g.fillText(String(i+1),m+d/2,y+rh/2);g.textAlign='left';g.textBaseline='top';
+   if(hasBg){g.shadowColor='rgba(0,0,0,.35)';g.shadowBlur=W*.012}
+   g.font=F(600,fs);drawL(g,{L,lh},m+d+gx,y+(rh-L.length*lh)/2,tc,acc,tw,false);y+=rh+rg})}
+ else{
+  const A=fitTxt(g,s.t,mw,h*.5,W*.095,W*.05,z=>F(800,z,1),1.12),B=s.s?fitTxt(g,s.s,mw,h*.28,W*.042,W*.028,z=>F(400,z),1.4):{L:[],h:0},ph=W*.085,C=s.c;
+  const bh=W*.04+A.h+(B.L.length?gap+B.h:0)+(C?gap*1.4+ph:0);let y=imgSt.lay=='baixo'?y1-bh:y0+Math.max(0,(h-bh)/2);
+  g.fillStyle=acc;g.fillRect(m,y,W*.12,W*.012);y+=W*.04;
+  g.font=F(800,A.fs,1);y=drawL(g,A,m,y,tc,acc,mw,false);
+  if(B.L.length){y+=gap;g.font=F(400,B.fs);g.globalAlpha=.92;y=drawL(g,B,m,y,tc,acc,mw,false);g.globalAlpha=1}
+  if(C){y+=gap*1.4;g.shadowColor='transparent';g.shadowBlur=0;g.font=F(700,W*.038);const w=g.measureText(C).width+W*.09;g.fillStyle=acc;rrect(g,m,y,w,ph,ph/2);g.fill();g.fillStyle=pt;g.textBaseline='middle';g.fillText(C,m+W*.045,y+ph/2);g.textBaseline='top'}}
+ g.shadowColor='transparent';g.shadowBlur=0}
+/* ---- interface ---- */
+function imgInit(){if(imgSt.init)return;imgSt.init=1;imgSt.cor=cfg().cor||'#0f766e';imgSt.fonte=cfg().fonte||'mod';const P=S.profissionais.find(p=>p.cro);imgSt.rt=P?`${P.nome} - ${P.cro}`:'';if(!imgSl.length)imgSl=[novoSl()]}
+function mImg(){imgInit();imgFonts().then(()=>drawArt());if(cfg().logo&&!imgLogo)loadImg(cfg().logo).then(i=>{imgLogo=i;drawArt()}).catch(()=>{});imgRender()}
+function imgDePost(id){const p=S.posts.find(x=>x.id==id);imgInit();imgTm=p?.tema||'';mkTab='img';vMkt()}
+function imgRender(){const sl=imgSl[imgI],cr=cfg();
+ $('#mt').innerHTML=`<style>.imgw{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}.imgw>.l{flex:1 1 380px;min-width:0}.imgw>.r{flex:0 1 460px;position:sticky;top:12px}.chip{padding:6px 12px;border-radius:16px;background:#e5e7eb;color:var(--t)}.chip.on{background:var(--p);color:#fff}.th{width:64px;cursor:pointer;border:2px solid transparent;border-radius:6px;text-align:center;flex:0 0 auto}.th.on{border-color:var(--p)}.th img{width:100%;display:block;border-radius:4px;background:#eee}.imgw h3{margin:0 0 10px}</style>
+ <div class="imgw"><div class="l">
+ <div class="card"><h3>1. Tema e IA</h3><p style="color:var(--m);margin-top:0">Informe o tema e deixe a IA montar o carrossel inteiro ou só o texto do slide atual. O texto é desenhado pelo sistema, sem erros de ortografia. Use *asteriscos* para destacar palavras.</p>
+  <div class="row"><input id="itm" placeholder="Tema do post (ex.: 3 erros ao escovar os dentes)" value="${esc(imgTm)}" oninput="imgTm=this.value"></div>
+  <div class="row"><button onclick="imgCarrossel(this)">🤖 Criar carrossel com IA</button><button class="s" onclick="imgSug(this)">🤖 Sugerir texto deste slide</button></div></div>
+ <div class="card"><h3>2. Modelo do slide ${imgI+1}</h3><div class="row" style="gap:6px">${opts(Object.entries(TPL),([k,v])=>`<button class="chip ${k==sl.tpl?'on':''}" style="flex:0 0 auto" onclick="imgTpl('${k}')">${v}</button>`)}</div>
+  ${opts(FIELDS[sl.tpl],([k,l,tp])=>`<label style="display:block;margin-bottom:8px"><small style="color:var(--m)">${l}</small>${tp=='a'?`<textarea rows="2" oninput="imgSet('${k}',this.value)">${esc(sl[k])}</textarea>`:`<input value="${esc(sl[k])}" oninput="imgSet('${k}',this.value)">`}</label>`)}
+  ${sl.tpl=='dica'?`<select onchange="imgSt.lay=this.value;drawArt()"><option value="centro" ${imgSt.lay=='centro'?'selected':''}>Texto ao centro</option><option value="baixo" ${imgSt.lay=='baixo'?'selected':''}>Texto embaixo</option></select>`:''}</div>
+ <div class="card"><h3>3. Aparência (vale para todos os slides)</h3>
+  <div class="row"><select onchange="imgSt.fmt=this.value;drawArt()">${opts(Object.entries(FMT),([k,v])=>`<option value="${k}" ${k==imgSt.fmt?'selected':''}>${v[3]}</option>`)}</select><select onchange="imgSt.tema=this.value;drawArt()">${opts(Object.entries(ESTILOS),([k,v])=>`<option value="${k}" ${k==imgSt.tema?'selected':''}>Estilo: ${v}</option>`)}</select></div>
+  <div class="row"><select onchange="imgSt.fonte=this.value;imgPersist();imgFonts().then(drawArt)">${opts(Object.entries(FONTS),([k,v])=>`<option value="${k}" ${k==imgSt.fonte?'selected':''}>Fonte: ${v.n}</option>`)}</select><select onchange="imgSt.bg=this.value;drawArt()">${opts(Object.entries(BGS),([k,v])=>`<option value="${k}" ${k==imgSt.bg?'selected':''}>Fundo: ${v}</option>`)}</select><label style="flex:0 0 auto;display:flex;align-items:center;gap:6px">Cor da marca <input type="color" style="width:48px;padding:2px" value="${esc(imgSt.cor)}" onchange="imgSt.cor=this.value;imgPersist();drawArt()"></label></div>
+  <div class="row"><label>Usar minha imagem de fundo<input type="file" accept="image/*" onchange="imgUp(this)"></label><button class="s" onclick="imgBg=null;drawArt()">Remover imagem de fundo</button></div>
+  <div class="row"><input id="ifp" placeholder="Fundo com IA (exige faturamento Google AI): descreva a cena"><button class="s" onclick="imgFundo(this)">🤖 Gerar fundo</button></div></div>
+ <div class="card"><h3>4. Marca e responsabilidade técnica</h3><div class="row"><label>Logo da clínica (fica salva)<input type="file" accept="image/*" onchange="imgLogoUp(this)"></label></div><div class="row"><input placeholder="Responsável técnico e CRO (exigido pelo CFO)" value="${esc(imgSt.rt)}" oninput="imgSt.rt=this.value;drawArt()"></div></div>
+ ${imgLeg?`<div class="card"><h3>Legenda sugerida</h3><textarea id="ileg" rows="6">${esc(imgLeg)}</textarea><div class="row" style="margin-top:8px"><button class="s" onclick="navigator.clipboard.writeText($('#ileg').value).then(()=>alert('Legenda copiada'))">Copiar legenda</button></div></div>`:''}
+ </div><div class="r"><div class="card" style="text-align:center"><canvas id="cv2" style="width:100%;height:auto;border-radius:8px;border:1px solid var(--b)"></canvas>
+  <div class="row" style="margin:12px 0 0;justify-content:center"><button onclick="imgDown()">Baixar PNG</button>${imgSl.length>1?'<button onclick="imgDownAll(this)">Baixar todos (ZIP)</button>':''}</div></div>
+  <div class="card"><div class="row" style="margin-bottom:8px"><button class="s" onclick="imgAdd()">+ Slide</button><button class="s" onclick="imgDup()">Duplicar</button><button class="d" onclick="imgDel()">Excluir</button></div>
+  <div style="display:flex;gap:8px;overflow-x:auto">${opts(imgSl,(x,i)=>`<div class="th ${i==imgI?'on':''}" onclick="imgGo(${i})"><img id="th${i}" alt=""><small>${i+1}</small></div>`)}</div></div></div></div>`;drawArt()}
+const imgGo=i=>{imgI=i;imgRender()};
+const imgTpl=k=>{imgSl[imgI].tpl=k;imgRender()};
+const imgAdd=()=>{imgSl.splice(imgI+1,0,novoSl());imgI++;imgRender()};
+const imgDup=()=>{imgSl.splice(imgI+1,0,{...imgSl[imgI]});imgI++;imgRender()};
+const imgDel=()=>{if(imgSl.length<2)return alert('A arte precisa de ao menos um slide.');imgSl.splice(imgI,1);imgI=Math.max(0,imgI-1);imgRender()};
+let imgTh=0;
+function imgSet(k,v){imgSl[imgI][k]=v;drawArt()}
+function drawArt(){const cv=$('#cv2');if(!cv)return;const[W,H]=FMT[imgSt.fmt];cv.width=W;cv.height=H;drawSlide(cv.getContext('2d'),W,H,imgSl[imgI],imgI,imgSl.length);clearTimeout(imgTh);imgTh=setTimeout(imgThumbs,250)}
+function imgThumbs(){const[W,H]=FMT[imgSt.fmt],w=150,h=Math.round(w*H/W);imgSl.forEach((s,i)=>{const el=$('#th'+i);if(!el)return;const c=document.createElement('canvas');c.width=w;c.height=h;drawSlide(c.getContext('2d'),w,h,s,i,imgSl.length);el.src=c.toDataURL('image/jpeg',.7)})}
+function imgDown(){$('#cv2').toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`arte-${imgI+1}-${hoje()}.png`;a.click()})}
+function crc32(u){const t=crc32.t||(crc32.t=Array.from({length:256},(_,n)=>{let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;return c>>>0}));let r=-1;for(let i=0;i<u.length;i++)r=t[(r^u[i])&255]^(r>>>8);return(r^-1)>>>0}
+function zipStore(files){const enc=new TextEncoder(),parts=[],cd=[];let off=0;
+ for(const f of files){const n=enc.encode(f.name),crc=crc32(f.data),sz=f.data.length,h=new DataView(new ArrayBuffer(30));
+  h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x0800,true);h.setUint16(12,0x21,true);h.setUint32(14,crc,true);h.setUint32(18,sz,true);h.setUint32(22,sz,true);h.setUint16(26,n.length,true);
+  parts.push(new Uint8Array(h.buffer),n,f.data);
+  const c=new DataView(new ArrayBuffer(46));c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x0800,true);c.setUint16(14,0x21,true);c.setUint32(16,crc,true);c.setUint32(20,sz,true);c.setUint32(24,sz,true);c.setUint16(28,n.length,true);c.setUint32(42,off,true);
+  cd.push(new Uint8Array(c.buffer),n);off+=30+n.length+sz}
+ let cs=0;cd.forEach(p=>cs+=p.length);const e=new DataView(new ArrayBuffer(22));e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,cs,true);e.setUint32(16,off,true);
+ return new Blob([...parts,...cd,new Uint8Array(e.buffer)],{type:'application/zip'})}
+async function imgDownAll(b){const t=b.textContent;b.textContent='Gerando...';b.disabled=true;
+ try{const[W,H]=FMT[imgSt.fmt],F=[];for(let i=0;i<imgSl.length;i++){const c=document.createElement('canvas');c.width=W;c.height=H;drawSlide(c.getContext('2d'),W,H,imgSl[i],i,imgSl.length);
+   const bl=await new Promise(r=>c.toBlob(r,'image/png'));F.push({name:`slide-${String(i+1).padStart(2,'0')}.png`,data:new Uint8Array(await bl.arrayBuffer())})}
+  const a=document.createElement('a');a.href=URL.createObjectURL(zipStore(F));a.download=`carrossel-${hoje()}.zip`;a.click()}
+ catch(e){alert(e.message)}finally{b.textContent=t;b.disabled=false}}
+async function imgCarrossel(b){const t=(imgTm||'').trim();if(!t)return alert('Informe o tema do post');const tx=b.textContent;b.textContent='Criando...';b.disabled=true;
+ try{const r=await gemini(`Tema: ${t}. Crie um carrossel educativo de Instagram com 6 slides para uma clínica odontológica. O slide 1 é a capa (modelo dica, com título chamativo e subtítulo curto). Os slides do meio podem usar lista (campo itens com um item por linha, até 5 itens curtos), mito (campos mito e ver), destaque (frase curta em t e complemento em s) ou dica. O último é dica com chamada no campo c convidando a agendar avaliação pelo WhatsApp. Destaque 1 ou 2 palavras-chave dos títulos com *asteriscos*. Textos curtos. Responda SOMENTE um JSON {"slides":[{"tpl":"dica","t":"","s":"","c":"","mito":"","ver":"","itens":""}],"legenda":"legenda do post","hashtags":"#a #b"}`,sysMkt());
+  const j=JSON.parse(r.slice(r.indexOf('{'),r.lastIndexOf('}')+1));
+  imgSl=(j.slides||[]).slice(0,10).map(x=>novoSl({...x,tpl:TPL[x.tpl]?x.tpl:'dica',itens:Array.isArray(x.itens)?x.itens.join('\n'):(x.itens||'')}));if(!imgSl.length)throw new Error('A IA não retornou slides.');
+  imgI=0;imgLeg=((j.legenda||'')+'\n\n'+(j.hashtags||'')).trim();imgRender()}
+ catch(e){alert('Não consegui criar o carrossel: '+e.message)}finally{b.textContent=tx;b.disabled=false}}
+async function imgSug(b){const t=(imgTm||'').trim();if(!t)return alert('Informe o tema do post');const sl=imgSl[imgI],tx=b.textContent;b.textContent='Criando...';b.disabled=true;
+ try{const r=await gemini(`Tema: ${t}. Escreva o texto de um slide de Instagram no modelo "${sl.tpl}" para uma clínica odontológica. Campos: ${FIELDS[sl.tpl].map(f=>f[0]+' ('+f[1]+')').join(', ')}. Textos curtos; destaque 1 ou 2 palavras-chave do título com *asteriscos*. Para itens, separe por quebra de linha. Responda SOMENTE um JSON com esses campos.`,sysMkt());
+  const j=JSON.parse(r.slice(r.indexOf('{'),r.lastIndexOf('}')+1));FIELDS[sl.tpl].forEach(([k])=>{if(j[k]!=null)sl[k]=Array.isArray(j[k])?j[k].join('\n'):String(j[k])});imgRender()}
+ catch(e){alert('Não consegui sugerir o texto: '+e.message)}finally{b.textContent=tx;b.disabled=false}}
+async function imgFundo(b){const d=$('#ifp').value.trim()||(imgTm||'').trim();if(!d)return alert('Descreva o fundo ou informe o tema');const r=FMT[imgSt.fmt][2],t=b.textContent;b.textContent='Gerando...';b.disabled=true;
+ try{const u=await geminiImg(`${d}. Clean, professional dental clinic marketing background, soft natural light, minimal composition with empty space for text overlay. No text, no letters, no logos, no identifiable people or faces, no before-and-after, no medical procedures in progress.`,r);imgBg=await loadImg(u);drawArt()}
+ catch(e){alert(e.message)}finally{b.textContent=t;b.disabled=false}}
+async function imgUp(el){const f=el.files[0];if(!f)return;try{imgBg=await loadImg(URL.createObjectURL(f));drawArt()}catch(e){alert(e.message)}}
+async function imgLogoUp(el){const f=el.files[0];if(!f)return;try{const im=await loadImg(URL.createObjectURL(f)),k=Math.min(1,400/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);const d=c.toDataURL('image/png');await cfgSet({logo:d});imgLogo=await loadImg(d);drawArt()}catch(e){alert('Não foi possível salvar a logo: '+e.message)}}
+/* ===== NOTAS FISCAIS (emissao assistida - NFS-e Nacional, Simples Nacional) ===== */
+let nfCp=[];
+const dbr=d=>d?d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4):'';
+const nfDesc=c=>(cfg().nfdesc||'Serviços odontológicos')+(c.procedimento?' - '+c.procedimento:'');
+function cpv(i,b){navigator.clipboard.writeText(nfCp[i]).then(()=>{b.textContent='Copiado'})}
+function vNf(){const R=new Set(S.notas.filter(n=>n.status!='cancelada').map(n=>n.consulta_id)),c=cfg(),
+ pend=S.consultas.filter(x=>x.pago&&x.valor>0&&x.status!='cancelada'&&!R.has(x.id)).sort((a,b)=>(b.data||'').localeCompare(a.data||'')),E=S.notas.filter(n=>n.status=='emitida');
+ $('main').innerHTML=`${c.cnpj&&c.nfcod?'':'<div class="card" style="border-color:#f59e0b">Preencha o CNPJ e o código de tributação em Configurações para facilitar a emissão. Confirme o código com seu contador (odontologia é o item 4.12 da lista de serviços).</div>'}<div class="kpis"><div class="card"><b>${pend.length}</b><span>Pagamentos sem nota</span></div><div class="card"><b>${brl(pend.reduce((a,x)=>a+ +x.valor,0))}</b><span>Valor sem nota</span></div><div class="card"><b>${E.length}</b><span>Notas emitidas</span></div></div><div id="nfp"></div>
+ <div class="card"><h3>Pagamentos sem nota fiscal</h3><p style="color:var(--m)">Emissão assistida: o sistema separa os dados prontos para copiar, você emite no Emissor Nacional (gov.br/nfse) e registra o número aqui. Aparecem os atendimentos marcados como pagos no Financeiro.</p><table><tr><th>Data</th><th>Paciente</th><th>Procedimento</th><th>Valor</th><th></th></tr>${opts(pend,x=>`<tr><td>${esc(dbr(x.data))}</td><td>${esc(x.paciente_nome)}</td><td>${esc(x.procedimento)}</td><td>${brl(x.valor)}</td><td style="white-space:nowrap"><button onclick="nfPrep('${x.id}')">Emitir</button> <button class="s" onclick="nfDisp('${x.id}')">Dispensar</button></td></tr>`)||'<tr><td colspan=5>Nenhum pagamento pendente de nota.</td></tr>'}</table></div>
+ <div class="card"><h3>Notas registradas</h3><table><tr><th>Competência</th><th>Paciente</th><th>Número</th><th>Valor</th><th>Status</th><th></th></tr>${opts(S.notas.filter(n=>n.status!='dispensada'),n=>`<tr><td>${esc(dbr(n.competencia))}</td><td>${esc(n.paciente_nome)}</td><td>${esc(n.numero)}</td><td>${brl(n.valor)}</td><td><span class="tag ${n.status=='emitida'?'ok':'no'}">${esc(n.status)}</span></td><td style="white-space:nowrap">${n.status=='emitida'?`${n.link?`<a href="${esc(n.link)}" target="_blank" rel="noopener">Abrir</a> <button class="s" onclick="nfZap('${n.id}')">WhatsApp</button> `:''}<button class="d" onclick="nfCanc('${n.id}')">Cancelar</button>`:''}</td></tr>`)||'<tr><td colspan=6>Nenhuma nota registrada.</td></tr>'}</table></div>`}
+function nfPrep(cid){const x=S.consultas.find(k=>k.id==cid),p=S.pacientes.find(k=>k.id==x.paciente_id),c=cfg();
+ const F=[['Tomador (paciente)',x.paciente_nome],['CPF do tomador',p?.cpf||''],['Descrição do serviço',nfDesc(x)],['Valor do serviço',(+x.valor).toFixed(2).replace('.',',')],['Data de competência',dbr(x.data)],['Código de tributação nacional',c.nfcod||''],['CNPJ do prestador',c.cnpj||'']];nfCp=F.map(f=>f[1]);
+ $('#nfp').innerHTML=`<div class="card"><h3>Emitir nota: ${esc(x.paciente_nome)}</h3>${p?.cpf?'':'<p style="color:var(--r)">Paciente sem CPF cadastrado. Informe na ficha do paciente ou emita sem tomador identificado, se permitido.</p>'}<table>${opts(F,(f,i)=>`<tr><td>${f[0]}</td><td>${esc(f[1])||'<i>não informado</i>'}</td><td><button class="s" onclick="cpv(${i},this)">Copiar</button></td></tr>`)}</table><div class="row" style="margin-top:12px"><button class="s" onclick="window.open('https://www.gov.br/nfse','_blank')">Abrir Emissor Nacional</button></div><div class="row"><input id="nfn" placeholder="Número da nota emitida"><input id="nfl" placeholder="Link ou chave de acesso (opcional)"><button onclick="nfReg('${cid}')">Registrar nota emitida</button></div></div>`;$('#nfp').scrollIntoView()}
+async function nfReg(cid){const x=S.consultas.find(k=>k.id==cid),num=$('#nfn').value.trim();if(!num)return alert('Informe o número da nota');
+ await db.save('notas_fiscais',{consulta_id:cid,paciente_id:x.paciente_id||null,paciente_nome:x.paciente_nome,descricao:nfDesc(x),valor:x.valor,competencia:x.data,numero:num,link:$('#nfl').value.trim(),status:'emitida'});await load()}
+async function nfDisp(cid){const x=S.consultas.find(k=>k.id==cid);if(!confirm('Dispensar a nota deste pagamento (ex.: paciente não solicitou)?'))return;
+ await db.save('notas_fiscais',{consulta_id:cid,paciente_id:x.paciente_id||null,paciente_nome:x.paciente_nome,valor:x.valor,competencia:x.data,status:'dispensada'});await load()}
+async function nfCanc(id){if(!confirm('Cancelar o registro desta nota? O cancelamento oficial deve ser feito também no Emissor Nacional.'))return;await db.save('notas_fiscais',{id,status:'cancelada'});await load()}
+function nfZap(id){const n=S.notas.find(k=>k.id==id),p=S.pacientes.find(k=>k.id==n.paciente_id);if(!p?.telefone)return alert('Paciente sem telefone cadastrado');
+ wa(p.telefone,`Olá, ${primeiro(p.nome)}! Segue a nota fiscal nº ${n.numero} do seu atendimento na ${clin()}: ${n.link}`)}
+/* sem sincronizacao automatica: toda alteracao no Google Agenda exige autorizacao */
+boot();
+</script></body></html>
